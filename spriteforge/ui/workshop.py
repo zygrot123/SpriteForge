@@ -151,6 +151,8 @@ class StructuresPage(ctk.CTkFrame):
             if img:
                 self._img = img
                 self.preview.configure(image=img, text="")
+            self.app.mind.note(f"struct_{kind}", text, style=self.style.get(), weight=1.0, path=str(path))
+            self.app.refresh_memory_label()
             self.app.set_status(f"Score {meta.get('total', 0):.0f}/100 · {path.name}", "ok")
 
         self.app.run_job(work, done, f"{MODES[qmode]['label']} — structure pipeline…")
@@ -340,6 +342,8 @@ class ScenesPage(ctk.CTkFrame):
             if img:
                 self._img = img
                 self.preview.configure(image=img, text="")
+            self.app.mind.note(f"scene_{kind}", text, style=self.style.get(), weight=1.0, path=str(path))
+            self.app.refresh_memory_label()
             self.app.set_status(f"{spec['label']} · score {meta.get('total', 0):.0f}/100 · {path.name}", "ok")
 
         self.app.run_job(work, done, f"Generating {spec['label'].lower()}…")

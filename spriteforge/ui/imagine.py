@@ -75,6 +75,10 @@ class ImaginePage(ctk.CTkFrame):
         self.motion = ctk.CTkTextbox(form, height=64, fg_color=theme.CARD)
         self.motion.pack(fill="x", padx=18)
         self.motion.insert("1.0", "slow camera push-in, light breathing, clouds and water living")
+        self.use_mem = ctk.CTkCheckBox(form, text="Use evolving memory (profile taste)")
+        self.use_mem.pack(anchor="w", padx=18, pady=(10, 0))
+        if self.app.cfg.get("use_memory", True):
+            self.use_mem.select()
 
         ctk.CTkButton(
             form, text="Imagine  ×4", height=42, fg_color=theme.WARM, hover_color="#d45544",
@@ -134,8 +138,13 @@ class ImaginePage(ctk.CTkFrame):
     def _motion(self) -> str:
         return self.motion.get("1.0", "end").strip()
 
+    def _memory(self) -> str:
+        if not self.use_mem.get() or not self.app.cfg.get("use_memory", True):
+            return ""
+        return self.app.mind.steer()
+
     def _refresh_compiled(self) -> str:
-        p = think_prompt(self._idea(), style=self.style.get(), think=self._think())
+        p = think_prompt(self._idea(), style=self.style.get(), think=self._think(), memory=self._memory())
         self.compiled.delete("1.0", "end")
         self.compiled.insert("1.0", p)
         return p
@@ -161,10 +170,12 @@ class ImaginePage(ctk.CTkFrame):
         style = self.style.get()
         think = self._think()
 
+        mem = self._memory()
+
         def work():
             return generate_variations(
                 self.app.client(), text, style=style, think=think,
-                width=w, height=h, seed=seed,
+                width=w, height=h, seed=seed, memory=mem,
             )
 
         def done(paths, err):
@@ -174,9 +185,11 @@ class ImaginePage(ctk.CTkFrame):
             self.vars = list(paths or [])
             self._render_grid()
             if self.vars:
-                self.pick(0)
+                self.pick(0, remember=False)
             for p in self.vars:
                 self.app.lib.record_output(p, {"kind": "imagine", "prompt": text, "seed": seed})
+            self.app.mind.note("imagine", text, style=style, aspect=self.aspect.get(), weight=1.0)
+            self.app.refresh_memory_label()
             self.app.set_status(f"4 variations ready — click one, then 4K or video.", "ok")
 
         self.app.run_job(work, done, "Imagining 4 variations…")
@@ -192,7 +205,7 @@ class ImaginePage(ctk.CTkFrame):
                     continue
             lbl.configure(image=None, text=f"V{i + 1}")
 
-    def pick(self, index: int) -> None:
+    def pick(self, index: int, remember: bool = True) -> None:
         if index < 0 or index >= len(self.vars):
             return
         self.picked_i = index
@@ -208,6 +221,17 @@ class ImaginePage(ctk.CTkFrame):
             text=f"Selected  V{index + 1}  ·  {self.picked.name}",
             text_color=theme.ACCENT,
         )
+        if remember:
+            self.app.mind.note(
+                "pick",
+                self._idea(),
+                style=self.style.get(),
+                aspect=self.aspect.get(),
+                variant=index,
+                weight=2.0,
+                path=str(self.picked),
+            )
+            self.app.refresh_memory_label()
 
     def upscale(self) -> None:
         src = self._selected()
@@ -227,6 +251,12 @@ class ImaginePage(ctk.CTkFrame):
                 return
             self.app.last_image = path
             self.app.lib.record_output(path, {"kind": "imagine_4k", "prompt": text, "src": str(src)})
+            self.app.mind.note(
+                "upscale", text, style=style, aspect=self.aspect.get(),
+                variant=self.picked_i if self.picked_i >= 0 else None,
+                weight=3.0, path=str(path),
+            )
+            self.app.refresh_memory_label()
             img = _thumb(path, (960, 540))
             if img:
                 self._hero = img
@@ -276,6 +306,8 @@ class ImaginePage(ctk.CTkFrame):
                 return
             still, path = payload
             self.app.last_image = still
+            self.app.mind.note("video", text, style=style, aspect=self.aspect.get(), weight=2.0, path=str(path))
+            self.app.refresh_memory_label()
             self.app.set_status(f"Video ready → {path.name}", "ok")
             os.startfile(path)
 
@@ -296,6 +328,8 @@ class ImaginePage(ctk.CTkFrame):
             if err:
                 self.app.set_status(f"Video failed: {err}", "err")
                 return
+            self.app.mind.note("video", text, style=style, aspect=self.aspect.get(), weight=2.0, path=str(path))
+            self.app.refresh_memory_label()
             self.app.set_status(f"Video ready → {path.name}", "ok")
             os.startfile(path)
             try:

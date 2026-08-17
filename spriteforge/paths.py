@@ -48,6 +48,7 @@ RUNTIME = ROOT / "runtime"
 DOWNLOADS = RUNTIME / "downloads"
 CONFIG_PATH = ROOT / "config.json"
 LOG_PATH = ROOT / "spriteforge.log"
+MEMORY = ROOT / "memory"
 
 
 def default_comfy_candidates() -> list[Path]:
@@ -94,5 +95,5 @@ COMFY_OUTPUT = COMFY_DEFAULT / "output"
 
 
 def ensure_dirs() -> None:
-    for p in (DATA, LIBRARY, MODELS, OUTPUTS, SHEETS, FRAMES, ANIMS, EXPORTS, VIDEOS, JOBS, RUNTIME, DOWNLOADS):
+    for p in (DATA, LIBRARY, MODELS, OUTPUTS, SHEETS, FRAMES, ANIMS, EXPORTS, VIDEOS, JOBS, RUNTIME, DOWNLOADS, MEMORY):
         p.mkdir(parents=True, exist_ok=True)

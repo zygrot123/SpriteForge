@@ -48,7 +48,14 @@ UHD_LONG = 3840
 FLUX_PIXEL_CAP = 3840 * 2160
 
 
-def think_prompt(text: str, *, style: str = "Open (free)", think: bool = True, extra: str = "") -> str:
+def think_prompt(
+    text: str,
+    *,
+    style: str = "Open (free)",
+    think: bool = True,
+    extra: str = "",
+    memory: str = "",
+) -> str:
     idea = (text or "").strip()
     parts = [f"The idea to paint: {idea}"]
     if think:
@@ -56,6 +63,8 @@ def think_prompt(text: str, *, style: str = "Open (free)", think: bool = True, e
     tint = FREE_STYLES.get(style, "")
     if tint:
         parts.append(tint)
+    if memory:
+        parts.append(f"Stay consistent with this user's evolving memory: {memory}")
     if extra:
         parts.append(extra)
     return ", ".join(parts)
@@ -88,10 +97,11 @@ def generate_variations(
     guidance: float = 3.5,
     seed: int | None = None,
     count: int = 4,
+    memory: str = "",
 ) -> list[Path]:
     ensure_dirs()
     seed = seed if seed is not None else random.randint(1, 2**31 - 1)
-    base = think_prompt(text, style=style, think=think)
+    base = think_prompt(text, style=style, think=think, memory=memory)
     width, height = snap16(width), snap16(height)
     out: list[Path] = []
     for i, hint in enumerate(VARIANTS[: max(1, count)]):
@@ -139,6 +149,7 @@ def upscale_4k(
         style=style,
         think=think,
         extra="ultra-sharp 4K master, recover texture and edges, do not change the subject or composition",
+        memory="",
     )
     dest = unique_out(OUTPUTS, "imagine_4k")
 

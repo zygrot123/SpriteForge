@@ -9,9 +9,11 @@ import customtkinter as ctk
 from ..config import load_config, save_config
 from ..engine.assets import Library
 from ..engine.comfy import ComfyClient, ComfyError, start_comfy
+from ..engine.memory import MemoryStore
 from ..paths import LOG_PATH, OUTPUTS, ensure_dirs
 from . import theme
 from .imagine import ImaginePage
+from .memory import MemoryPage
 from .studio import AnimatePage, GeneratePage, ModelsPage
 from .workshop import ExportPage, LibraryPage, ScenesPage, SettingsPage, SheetsPage, StructuresPage
 
@@ -23,6 +25,7 @@ class SpriteForgeApp(ctk.CTk):
         ensure_dirs()
         self.cfg = load_config()
         self.lib = Library()
+        self.mind = MemoryStore()
         self.busy = False
         self.last_image = None
         self.last_frames: list = []
@@ -42,6 +45,7 @@ class SpriteForgeApp(ctk.CTk):
         self._build_sidebar()
         self._build_body()
         self._build_status()
+        self.refresh_memory_label()
         self.show("generate")
         self.after(500, self.maybe_autostart)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -66,7 +70,17 @@ class SpriteForgeApp(ctk.CTk):
             text="Free local sprite studio",
             text_color=theme.MUTED,
             font=ctk.CTkFont(family="Segoe UI", size=12),
-        ).pack(padx=18, pady=(0, 18), anchor="w")
+        ).pack(padx=18, pady=(0, 4), anchor="w")
+        self.memory_lbl = ctk.CTkLabel(
+            side,
+            text="",
+            text_color=theme.ACCENT,
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            wraplength=180,
+            justify="left",
+            anchor="w",
+        )
+        self.memory_lbl.pack(padx=18, pady=(0, 16), anchor="w")
 
         items = [
             ("generate", "Generate"),
@@ -78,6 +92,7 @@ class SpriteForgeApp(ctk.CTk):
             ("sheets", "Sprite sheets"),
             ("export", "Export"),
             ("library", "Library"),
+            ("memory", "Memory"),
             ("settings", "Settings"),
         ]
         for key, label in items:
@@ -118,6 +133,7 @@ class SpriteForgeApp(ctk.CTk):
         self._pages["sheets"] = SheetsPage(self.body, self)
         self._pages["export"] = ExportPage(self.body, self)
         self._pages["library"] = LibraryPage(self.body, self)
+        self._pages["memory"] = MemoryPage(self.body, self)
         self._pages["settings"] = SettingsPage(self.body, self)
         for page in self._pages.values():
             page.grid(row=0, column=0, sticky="nsew")
@@ -147,6 +163,10 @@ class SpriteForgeApp(ctk.CTk):
                 btn.configure(fg_color="transparent", text_color=theme.TEXT)
         if hasattr(page, "on_show"):
             page.on_show()
+
+    def refresh_memory_label(self) -> None:
+        if hasattr(self, "memory_lbl"):
+            self.memory_lbl.configure(text=self.mind.summary())
 
     def set_status(self, text: str, kind: str = "info") -> None:
         colors = {"info": theme.MUTED, "ok": theme.OK, "warn": theme.WARN, "err": theme.WARM}

@@ -31,6 +31,8 @@ DEFAULTS = {
     "setup_complete": False,
     "install_pack": "flux",
     "quality_mode": "quality",
+    "use_memory": True,
+    "active_profile": "default",
 }
 
 

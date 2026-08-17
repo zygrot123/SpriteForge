@@ -305,6 +305,8 @@ class GeneratePage(ctk.CTkFrame):
             score = metas[0].get("total", 0)
             same = "same character" if metas[0].get("same_character") or hold else "new character"
             refined = " · refined" if metas[0].get("refined") else ""
+            self.app.mind.note("sprite", o["text"], style=o.get("style", ""), weight=1.0, path=str(paths[0]))
+            self.app.refresh_memory_label()
             self.app.set_status(
                 f"{same} · score {score:.0f}/100{refined} · {len(paths)} → {paths[0].name}",
                 "ok",
