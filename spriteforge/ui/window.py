@@ -14,6 +14,7 @@ from ..engine.progress import IDLE_HELP, JobClock, fmt_secs, record_sample
 from ..paths import LOG_PATH, OUTPUTS, ensure_dirs
 from . import theme
 from .chat import ChatPage
+from .floors import FloorsPage
 from .imagine import ImaginePage
 from .memory import MemoryPage
 from .studio import AnimatePage, GeneratePage, ModelsPage
@@ -102,6 +103,7 @@ class SpriteForgeApp(ctk.CTk):
             ("models", "Lock model"),
             ("animate", "Animations"),
             ("structures", "Structures"),
+            ("floors", "Floors"),
             ("scenes", "Scenes"),
             ("sheets", "Sprite sheets"),
             ("export", "Export"),
@@ -144,6 +146,7 @@ class SpriteForgeApp(ctk.CTk):
         self._pages["models"] = ModelsPage(self.body, self)
         self._pages["animate"] = AnimatePage(self.body, self)
         self._pages["structures"] = StructuresPage(self.body, self)
+        self._pages["floors"] = FloorsPage(self.body, self)
         self._pages["scenes"] = ScenesPage(self.body, self)
         self._pages["sheets"] = SheetsPage(self.body, self)
         self._pages["export"] = ExportPage(self.body, self)

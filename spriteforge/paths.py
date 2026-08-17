@@ -43,6 +43,7 @@ FRAMES = LIBRARY / "frames"
 ANIMS = LIBRARY / "anims"
 EXPORTS = LIBRARY / "exports"
 VIDEOS = LIBRARY / "videos"
+MAPS = LIBRARY / "maps"
 JOBS = LIBRARY / "jobs"
 RUNTIME = ROOT / "runtime"
 DOWNLOADS = RUNTIME / "downloads"
@@ -95,5 +96,5 @@ COMFY_OUTPUT = COMFY_DEFAULT / "output"
 
 
 def ensure_dirs() -> None:
-    for p in (DATA, LIBRARY, MODELS, OUTPUTS, SHEETS, FRAMES, ANIMS, EXPORTS, VIDEOS, JOBS, RUNTIME, DOWNLOADS, MEMORY):
+    for p in (DATA, LIBRARY, MODELS, OUTPUTS, SHEETS, FRAMES, ANIMS, EXPORTS, VIDEOS, MAPS, JOBS, RUNTIME, DOWNLOADS, MEMORY):
         p.mkdir(parents=True, exist_ok=True)

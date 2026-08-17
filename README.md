@@ -10,6 +10,7 @@ Track this repo in **GitHub Desktop** (File → Add local repository → `Sprite
 - **Lock model** — save a character as an exact identity (description + reference image + seed). Later images start from that reference instead of rolling a new person.
 - **Animations** — idle, walk, run, attack, cast, hurt, death, jump, dash, turnaround. Each frame is img2img from the previous one so the model stays the same.
 - **Structures** — buildings, dungeon pieces, tiles, props, trees, furniture, pillars, gates.
+- **Floors** — Seeing Eyes-style local dungeon builder. Paint floor / hall / water / cave tiles, press R to rotate, Generate fills the rest so openings meet. Bake a matching Flux kit, then export isometric + top-down PNG or a zip.
 - **Sheets** — overlay a grid, slice a sheet, compose a folder of frames, preview the loop.
 
 ## Run (this PC, from source)
@@ -18,7 +19,7 @@ Double-click `launch.bat`.
 
 ## Download the EXE (Release)
 
-**[SpriteForge v1.0.8 — Windows zip](https://github.com/zygrot123/SpriteForge/releases/tag/v1.0.8)**
+**[SpriteForge v1.0.9 — Windows zip](https://github.com/zygrot123/SpriteForge/releases/tag/v1.0.9)**
 
 Unzip the whole folder, then run `SpriteForge.exe`. Keep `_internal` next to the exe.
 
@@ -53,6 +54,7 @@ Open **Settings → Download / repair engine** to re-run the installer.
 | `library/outputs/` | One-off sprites and structures |
 | `library/frames/` | Animation frames |
 | `library/sheets/` | Exported sprite sheets |
+| `library/maps/` | Floor / dungeon grids, Flux kits, zip packs |
 
 ## Local only
 

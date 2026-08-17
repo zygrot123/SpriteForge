@@ -32,7 +32,7 @@ class StructuresPage(ctk.CTkFrame):
         form = ctk.CTkScrollableFrame(self, fg_color=theme.PANEL, width=380, corner_radius=0)
         form.grid(row=0, column=0, sticky="nsew")
         ctk.CTkLabel(form, text="Structures & tiles", text_color=theme.TEXT, font=ctk.CTkFont("Segoe UI", 22, "bold")).pack(anchor="w", padx=18, pady=(18, 4))
-        theme.muted(form, "Buildings, dungeon chunks, props, vegetation, doors, and seamless tiles — isolated so you can drop them in-engine.").pack(anchor="w", padx=18, pady=(0, 12))
+        theme.muted(form, "Buildings, dungeon chunks, props, vegetation, doors, and seamless tiles — isolated so you can drop them in-engine. Open Floors to paint and auto-solve a whole dungeon from these pieces.").pack(anchor="w", padx=18, pady=(0, 12))
 
         kinds = [v["label"] for v in STRUCTURES.values()]
         theme.section(form, "Kind").pack(anchor="w", padx=18, pady=(8, 4))
