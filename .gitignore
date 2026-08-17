@@ -39,3 +39,4 @@ Desktop.ini
 # Keep the unique app icon
 !tools/*.png
 !tools/*.ico
+tools/rcedit.exe

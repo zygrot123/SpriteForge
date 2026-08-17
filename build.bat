@@ -12,6 +12,7 @@ if not exist "tools\7zr.exe" (
   exit /b 1
 )
 ".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean SpriteForge.spec
+copy /Y "tools\spriteforge.ico" "dist\SpriteForge\spriteforge.ico" >nul
 copy /Y "dist_readme.txt" "dist\SpriteForge\READ ME - extract the WHOLE zip.txt" >nul
 copy /Y "Start SpriteForge.bat" "dist\SpriteForge\Start SpriteForge.bat" >nul
 echo.

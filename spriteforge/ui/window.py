@@ -33,10 +33,7 @@ class SpriteForgeApp(ctk.CTk):
         self.geometry("1280x820")
         self.minsize(1100, 720)
         self.configure(fg_color=theme.BG)
-        try:
-            self.iconbitmap(default="")
-        except Exception:
-            pass
+        theme.apply_icon(self)
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)

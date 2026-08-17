@@ -44,6 +44,7 @@ class SetupWizard:
         self.win.geometry("860x780")
         self.win.minsize(780, 680)
         self.win.configure(fg_color=theme.BG)
+        theme.apply_icon(self.win)
 
         ctk.CTkLabel(
             self.win,

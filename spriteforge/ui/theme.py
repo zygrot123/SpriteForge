@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import customtkinter as ctk
+
+from ..paths import BUNDLE, PROJECT, exe_dir, is_frozen
 
 BG = "#0c0f14"
 PANEL = "#141922"
@@ -18,6 +22,40 @@ OK = "#5bd68a"
 def apply() -> None:
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("dark-blue")
+
+
+def icon_path() -> Path | None:
+    import sys
+
+    candidates = [
+        BUNDLE / "tools" / "spriteforge.ico",
+        PROJECT / "tools" / "spriteforge.ico",
+        exe_dir() / "spriteforge.ico",
+        exe_dir() / "_internal" / "tools" / "spriteforge.ico",
+    ]
+    for p in candidates:
+        if p.is_file():
+            return p
+    if is_frozen():
+        exe = Path(sys.executable)
+        if exe.is_file():
+            return exe
+    return None
+
+
+def apply_icon(win) -> None:
+    ico = icon_path()
+    if ico is None:
+        return
+    path = str(ico)
+    try:
+        win.iconbitmap(path)
+    except Exception:
+        pass
+    try:
+        win.iconbitmap(default=path)
+    except Exception:
+        pass
 
 
 def section(parent, title: str) -> ctk.CTkLabel:

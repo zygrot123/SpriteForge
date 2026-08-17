@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [("tools/7zr.exe", "tools")]
+datas = [("tools/7zr.exe", "tools"), ("tools/spriteforge.ico", "tools")]
 binaries = []
 hiddenimports = ["PIL._tkinter_finder"]
 for pkg in ("customtkinter", "darkdetect"):
