@@ -121,6 +121,7 @@ class FloorsPage(ctk.CTkFrame):
         )
         self.tool.set("floor")
         self.tool.pack(fill="x", padx=18)
+        ctk.CTkButton(form, text="Rotate 90°  (R)", height=30, fg_color=theme.CARD, command=self._rotate).pack(fill="x", padx=18, pady=(6, 0))
         self.hand_lbl = ctk.CTkLabel(form, text="In hand: Floor  rot 0°", text_color=theme.ACCENT, anchor="w")
         self.hand_lbl.pack(fill="x", padx=18, pady=(6, 0))
 
@@ -152,8 +153,9 @@ class FloorsPage(ctk.CTkFrame):
         self.canvas.bind("<B1-Motion>", self._drag)
         self.canvas.bind("<ButtonRelease-1>", self._release)
         self.canvas.bind("<Motion>", self._move)
-        self.bind_all("<KeyPress-r>", self._rotate, add="+")
-        self.bind_all("<KeyPress-R>", self._rotate, add="+")
+        # CustomTkinter forbids bind_all on CTk widgets — bind the root window.
+        self.app.bind("<KeyPress-r>", self._rotate, add="+")
+        self.app.bind("<KeyPress-R>", self._rotate, add="+")
         self.after(200, self.redraw)
 
     def _slider(self, parent, title, lo, hi, value):
@@ -196,12 +198,13 @@ class FloorsPage(ctk.CTkFrame):
 
     def _rotate(self, _e=None):
         page = getattr(self.app, "_pages", {}).get("floors")
-        if page is not self:
+        if page is not None and page is not self:
             return
-        focus = self.focus_get()
-        cls = (focus.winfo_class() if focus else "") or ""
-        if cls in {"Text", "Entry", "TEntry"}:
-            return
+        if _e is not None:
+            focus = self.focus_get()
+            cls = (focus.winfo_class() if focus else "") or ""
+            if cls in {"Text", "Entry", "TEntry"}:
+                return
         spec = KIND.get(self.hand)
         turns = spec.turns if spec else 4
         self.rot = (self.rot + 1) % max(1, turns)
