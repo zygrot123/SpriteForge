@@ -18,7 +18,7 @@ Double-click `launch.bat`.
 
 ## Download the EXE (Release)
 
-**[SpriteForge v1.0.0 — Windows zip](https://github.com/zygrot123/SpriteForge/releases/tag/v1.0.0)**
+**[SpriteForge v1.0.1 — Windows zip](https://github.com/zygrot123/SpriteForge/releases/tag/v1.0.1)**
 
 Unzip the whole folder, then run `SpriteForge.exe`. Keep `_internal` next to the exe.
 
