@@ -21,8 +21,8 @@ class MemoryPage(ctk.CTkFrame):
         )
         theme.muted(
             left,
-            "Like Hermes: a profile that learns as you work. Sessions can be kept or deleted. "
-            "Picks and 4K upscales teach taste. Imagine uses this unless you turn it off.",
+            "Hermes bank: Forge chat, files, names, picks, and pins lock here. "
+            "New sessions do not wipe locked rows. Imagine is steered by the same bank.",
             wrap=330,
         ).pack(anchor="w", padx=18, pady=(0, 12))
 
@@ -61,28 +61,33 @@ class MemoryPage(ctk.CTkFrame):
 
         right = ctk.CTkFrame(self, fg_color=theme.BG)
         right.grid(row=0, column=1, sticky="nsew", padx=16, pady=16)
-        right.grid_rowconfigure(2, weight=1)
+        right.grid_rowconfigure(4, weight=1)
         right.grid_columnconfigure(0, weight=1)
 
         self.evolved = ctk.CTkLabel(
             right, text="", text_color=theme.TEXT, justify="left", anchor="nw", wraplength=720,
         )
-        self.evolved.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-
-        ctk.CTkLabel(right, text="SESSIONS", text_color=theme.ACCENT, font=ctk.CTkFont("Segoe UI", 12, "bold"), anchor="w").grid(
+        self.evolved.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        ctk.CTkLabel(right, text="BRAIN BANK (locked — Forge + studio)", text_color=theme.ACCENT, font=ctk.CTkFont("Segoe UI", 12, "bold"), anchor="w").grid(
             row=1, column=0, sticky="w", pady=(4, 4)
         )
-        self.sess_list = ctk.CTkScrollableFrame(right, fg_color=theme.CARD, height=180)
-        self.sess_list.grid(row=2, column=0, sticky="nsew")
+        self.bank_box = ctk.CTkTextbox(right, height=140, fg_color=theme.CARD, text_color=theme.MUTED, font=ctk.CTkFont("Consolas", 11))
+        self.bank_box.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+
+        ctk.CTkLabel(right, text="SESSIONS", text_color=theme.ACCENT, font=ctk.CTkFont("Segoe UI", 12, "bold"), anchor="w").grid(
+            row=3, column=0, sticky="w", pady=(4, 4)
+        )
+        self.sess_list = ctk.CTkScrollableFrame(right, fg_color=theme.CARD, height=140)
+        self.sess_list.grid(row=4, column=0, sticky="nsew")
 
         ctk.CTkLabel(right, text="THIS SESSION", text_color=theme.ACCENT, font=ctk.CTkFont("Segoe UI", 12, "bold"), anchor="w").grid(
-            row=3, column=0, sticky="w", pady=(12, 4)
+            row=5, column=0, sticky="w", pady=(12, 4)
         )
-        self.log = ctk.CTkTextbox(right, height=180, fg_color=theme.CARD, text_color=theme.MUTED, font=ctk.CTkFont("Consolas", 11))
-        self.log.grid(row=4, column=0, sticky="ew")
+        self.log = ctk.CTkTextbox(right, height=120, fg_color=theme.CARD, text_color=theme.MUTED, font=ctk.CTkFont("Consolas", 11))
+        self.log.grid(row=6, column=0, sticky="ew")
 
         self._pins_box = ctk.CTkFrame(right, fg_color="transparent")
-        self._pins_box.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+        self._pins_box.grid(row=7, column=0, sticky="ew", pady=(10, 0))
 
     def on_show(self) -> None:
         self.refresh()
@@ -111,6 +116,16 @@ class MemoryPage(ctk.CTkFrame):
         if pins:
             lines += ["", "Pinned:"] + [f"• {p}" for p in pins]
         self.evolved.configure(text="\n".join(lines))
+        self.bank_box.delete("1.0", "end")
+        bank = mind.bank()
+        if not bank:
+            self.bank_box.insert("1.0", "Empty. Chat with Forge, generate, or pin — locked rows stay forever.")
+        else:
+            blob = []
+            for row in bank[:80]:
+                lock = "LOCK" if row.get("locked") else "open"
+                blob.append(f"{row.get('when','')}  {lock}  {row.get('kind','')}  {(row.get('text') or '')[:140]}")
+            self.bank_box.insert("1.0", "\n".join(blob))
 
         for w in self.sess_list.winfo_children():
             w.destroy()

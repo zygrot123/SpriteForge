@@ -28,8 +28,8 @@ class ChatPage(ctk.CTkFrame):
         ).pack(anchor="w", padx=18, pady=(16, 2))
         theme.muted(
             head,
-            "Small local companion — written for this app, not a cloud model. "
-            "Upload jpg, png, zip, or rar and I look inside. I evolve as we talk and work.",
+            "Forge writes every chat, name, and file into the same Hermes memory bank as Imagine. "
+            "Locked rows survive new sessions. Upload jpg, png, zip, or rar — I look and keep it.",
             wrap=820,
         ).pack(anchor="w", padx=18, pady=(0, 12))
 

@@ -176,7 +176,7 @@ class ImaginePage(ctk.CTkFrame):
     def _memory(self) -> str:
         if not self.use_mem.get() or not self.app.cfg.get("use_memory", True):
             return ""
-        return self.app.mind.steer()
+        return self.app.mind.steer(self._idea())
 
     def _denoise(self) -> float:
         return float(STRENGTHS.get(self.strength.get(), 0.38))

@@ -20,6 +20,7 @@ STOP = {
 }
 
 WORD = re.compile(r"[a-z0-9']+")
+SPACE = re.compile(r"\s+")
 
 
 def _now() -> str:
@@ -120,7 +121,7 @@ class MemoryStore:
         return data
 
     def longterm(self, pid: str | None = None) -> dict:
-        return _read(
+        data = _read(
             self.root(pid) / "longterm.json",
             {
                 "uses": 0,
@@ -133,8 +134,16 @@ class MemoryStore:
                 "liked": [],
                 "pins": [],
                 "facts": [],
+                "bank": [],
+                "user_name": "",
             },
         )
+        data.setdefault("bank", [])
+        data.setdefault("user_name", "")
+        data.setdefault("pins", [])
+        data.setdefault("facts", [])
+        data.setdefault("liked", [])
+        return data
 
     def _save_longterm(self, data: dict, pid: str | None = None) -> None:
         _write(self.root(pid) / "longterm.json", data)
@@ -331,7 +340,15 @@ class MemoryStore:
         if weight >= 2 and prompt:
             liked = lt.setdefault("liked", [])
             liked.insert(0, {"when": now, "prompt": prompt[:300], "kind": kind})
-            lt["liked"] = liked[:40]
+            lt["liked"] = liked[:80]
+        if prompt and (weight >= 1.0 or kind in {"chat", "file", "edit", "upscale", "pick", "imagine"}):
+            self._deposit_into(
+                lt,
+                prompt,
+                kind=kind,
+                locked=kind in {"chat", "file"} or weight >= 2,
+                path=path,
+            )
         prof = self.profile()
         prof["uses"] = int(prof.get("uses", 0)) + 1
         _write(self.root() / "profile.json", prof)
@@ -357,9 +374,15 @@ class MemoryStore:
             facts.append("Hands-on with " + " and ".join(k for k, _c in kinds))
         if lt.get("uses", 0) >= 8:
             facts.append(f"Taste has evolved across {int(lt['uses'])} uses — stay consistent with past picks")
-        lt["facts"] = facts[:8]
+        if lt.get("user_name"):
+            facts.insert(0, f"User's name is {lt['user_name']}")
+        bank_chat = [b.get("text") for b in lt.get("bank", []) if b.get("kind") == "chat"][:2]
+        if bank_chat:
+            facts.append("From talk: " + " | ".join(t[:80] for t in bank_chat if t))
+        lt["facts"] = facts[:12]
 
     def _forget_session_traces(self, sess: dict) -> None:
+        """Trim session counters only. Locked bank entries are never wiped."""
         lt = self.longterm()
         prompts = {str(e.get("prompt") or "") for e in sess.get("events", [])}
         lt["liked"] = [row for row in lt.get("liked", []) if row.get("prompt") not in prompts]
@@ -387,35 +410,127 @@ class MemoryStore:
         pins = lt.setdefault("pins", [])
         if text not in pins:
             pins.insert(0, text)
-        lt["pins"] = pins[:30]
+        lt["pins"] = pins[:80]
+        self._deposit_into(lt, text, kind="pin", locked=True)
         self._save_longterm(lt)
 
     def unpin(self, text: str) -> None:
+        needle = (text or "").strip().lower()
         lt = self.longterm()
-        lt["pins"] = [p for p in lt.get("pins", []) if p != text]
+        lt["pins"] = [p for p in lt.get("pins", []) if p.lower() != needle]
+        # Only drop unlocked bank rows that match. Locked stay.
+        kept = []
+        for row in lt.get("bank", []):
+            if row.get("locked"):
+                kept.append(row)
+                continue
+            if needle and needle in (row.get("text") or "").lower():
+                continue
+            kept.append(row)
+        lt["bank"] = kept
         self._save_longterm(lt)
 
-    def steer(self) -> str:
+    def set_user_name(self, name: str) -> None:
+        name = (name or "").strip()
+        if not name:
+            return
+        lt = self.longterm()
+        lt["user_name"] = name
+        self._deposit_into(lt, f"User's name is {name}", kind="name", locked=True)
+        self._save_longterm(lt)
+        prof = self.profile()
+        if not prof.get("note"):
+            prof["note"] = f"Called {name}"
+            _write(self.root() / "profile.json", prof)
+
+    def deposit(self, text: str, *, kind: str = "chat", locked: bool = True, path: str = "") -> None:
+        lt = self.longterm()
+        self._deposit_into(lt, text, kind=kind, locked=locked, path=path)
+        self._save_longterm(lt)
+
+    def _deposit_into(self, lt: dict, text: str, *, kind: str, locked: bool, path: str = "") -> None:
+        text = SPACE.sub(" ", (text or "").strip())
+        if not text:
+            return
+        bank = lt.setdefault("bank", [])
+        key = text.lower()[:180]
+        for row in bank:
+            if (row.get("text") or "").lower()[:180] == key:
+                row["when"] = _now()
+                row["weight"] = float(row.get("weight", 1)) + 1
+                if locked:
+                    row["locked"] = True
+                if path:
+                    row["path"] = path
+                return
+        bank.insert(
+            0,
+            {
+                "id": _sid(),
+                "text": text[:500],
+                "kind": kind,
+                "when": _now(),
+                "weight": 1.0,
+                "locked": bool(locked),
+                "path": path,
+            },
+        )
+        # Never drop locked rows. Trim only unlocked overflow.
+        locked_rows = [r for r in bank if r.get("locked")]
+        open_rows = [r for r in bank if not r.get("locked")]
+        lt["bank"] = (locked_rows + open_rows)[:600]
+
+    def bank(self) -> list[dict]:
+        return list(self.longterm().get("bank") or [])
+
+    def recall(self, query: str = "", *, limit: int = 10) -> list[dict]:
+        rows = self.bank()
+        if not query.strip():
+            return rows[:limit]
+        q = set(WORD.findall(query.lower()))
+        scored = []
+        for row in rows:
+            words = set(WORD.findall((row.get("text") or "").lower()))
+            hit = len(q & words)
+            bonus = 3 if row.get("locked") else 0
+            scored.append((hit + bonus + float(row.get("weight", 0)) * 0.1, row))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        picked = [r for s, r in scored if s > 0][:limit]
+        if len(picked) < limit:
+            for row in rows:
+                if row not in picked:
+                    picked.append(row)
+                if len(picked) >= limit:
+                    break
+        return picked
+
+    def steer(self, query: str = "") -> str:
         lt = self.longterm()
         bits: list[str] = []
+        if lt.get("user_name"):
+            bits.append(f"Name: {lt['user_name']}")
         pins = [p for p in lt.get("pins", []) if p]
         if pins:
-            bits.append("Pinned: " + "; ".join(pins[:4]))
+            bits.append("Pinned: " + "; ".join(pins[:8]))
         facts = [f for f in lt.get("facts", []) if f]
         if facts:
-            bits.append("Evolved: " + "; ".join(facts[:5]))
-        liked = [row.get("prompt") for row in lt.get("liked", [])[:2] if row.get("prompt")]
+            bits.append("Evolved: " + "; ".join(facts[:6]))
+        liked = [row.get("prompt") for row in lt.get("liked", [])[:3] if row.get("prompt")]
         if liked:
-            bits.append("Recently loved: " + " | ".join(liked))
-        return " — ".join(bits)[:900]
+            bits.append("Loved: " + " | ".join(liked))
+        recalled = self.recall(query, limit=8)
+        if recalled:
+            bits.append("Bank: " + " || ".join((r.get("text") or "")[:120] for r in recalled if r.get("text")))
+        return " — ".join(bits)[:1600]
 
     def summary(self) -> str:
         prof = self.profile()
         sess = self.active_session() or {}
         lt = self.longterm()
         kept = "kept" if sess.get("kept") else "open"
+        bank_n = len(lt.get("bank") or [])
         return (
             f"{prof.get('name') or 'Profile'} · "
             f"{sess.get('title') or 'no session'} ({kept}) · "
-            f"{int(lt.get('uses', 0))} memories"
+            f"{int(lt.get('uses', 0))} uses · {bank_n} bank"
         )

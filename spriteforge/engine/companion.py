@@ -103,6 +103,7 @@ class Forge:
         nm = NAME_PAT.search(raw)
         if nm:
             st["user_name"] = nm.group(1).strip().title()
+            self.mind.set_user_name(st["user_name"])
         for phrase in extract_phrases(raw):
             echo = st.setdefault("echo", [])
             if phrase not in echo:
@@ -110,15 +111,21 @@ class Forge:
             st["echo"] = echo[:40]
         self._save(st)
         self._log("user", raw, {"files": [p.name for p in files]})
+        if raw:
+            self.mind.deposit(raw, kind="chat", locked=True)
+        for info in seen:
+            self.mind.deposit(info.get("summary") or info.get("name") or "file", kind="file", locked=True, path=info.get("path") or "")
 
         cleaned, _notes = fluidize(raw, expand=True)
         low = raw.lower()
-        who = st.get("user_name") or self.mind.profile().get("name") or "friend"
+        lt = self.mind.longterm()
+        who = lt.get("user_name") or st.get("user_name") or self.mind.profile().get("name") or "friend"
         age = st["talks"]
         streak = len(days)
-        mem = self.mind.steer()
-        facts = self.mind.longterm().get("facts") or []
-        pins = self.mind.longterm().get("pins") or []
+        mem = self.mind.steer(raw)
+        facts = lt.get("facts") or []
+        pins = lt.get("pins") or []
+        bank = self.mind.recall(raw, limit=10)
 
         out = self._compose(
             raw=raw,
@@ -134,17 +141,20 @@ class Forge:
             pins=pins,
             seen=seen,
             echo=st.get("echo") or [],
+            bank=bank,
         )
-        rem = REMEMBER_PAT.search(raw)
+        asking = bool(re.search(r"\b(what do you remember|do you remember|what do you know)\b", low))
+        rem = None if asking else REMEMBER_PAT.search(raw)
         if rem:
             self.mind.pin(rem.group(1).strip().rstrip("."))
-            out += "\n\nPinned that into long-term memory."
+            out += "\n\nLocked into the memory bank. I will not drop it."
         forget = FORGET_PAT.search(raw)
         if forget:
             self.mind.unpin(forget.group(1).strip().rstrip("."))
-            out += "\n\nForgot that pin, if I had it."
+            out += "\n\nRemoved that unlocked pin. Locked bank rows stay."
 
-        self.mind.note("chat", raw[:200], weight=0.6)
+        if raw:
+            self.mind.note("chat", raw[:400], weight=1.5)
         self._log("forge", out)
         return out
 
@@ -187,9 +197,9 @@ class Forge:
     def _who(self, k: dict) -> str:
         return (
             f"I'm Forge — a small local mind written for SpriteForge, not a rented cloud model. "
-            f"{dictionary_size()} studio phrases, your profile memory, and every file you show me. "
+            f"{dictionary_size()} studio phrases, and I write everything into your Hermes memory bank. "
             f"Born {self.state().get('born', 'recently')}. {k['age']} talks so far. "
-            f"I get sharper the more we work. Nothing leaves this PC."
+            f"Chat, files, names, and picks stay locked. I do not forget them. Nothing leaves this PC."
         )
 
     def _greet(self, k: dict) -> str:
@@ -201,28 +211,34 @@ class Forge:
         return f"Hey {k['who']}.{bit}{tail} Load a picture or a zip if you want me to look."
 
     def _about(self, k: dict) -> str:
-        lines = [f"What I hold on {k['who']}:"]
+        lines = [f"Memory bank for {k['who']} — I do not forget locked rows:"]
         if k["facts"]:
             lines += [f"• {f}" for f in k["facts"][:6]]
-        else:
-            lines.append("• Taste is still young — generate, pick, and chat more.")
         if k["pins"]:
-            lines.append("Pinned: " + "; ".join(k["pins"][:5]))
+            lines.append("Pinned: " + "; ".join(k["pins"][:8]))
+        bank = k.get("bank") or self.mind.recall(limit=8)
+        if bank:
+            lines.append("Bank:")
+            for row in bank[:8]:
+                lock = "🔒 " if row.get("locked") else ""
+                lines.append(f"  {lock}[{row.get('kind','')}] {(row.get('text') or '')[:140]}")
         if k["echo"]:
             lines.append("Words you keep using: " + ", ".join(k["echo"][:8]))
         seen = self.state().get("seen") or []
         if seen:
             lines.append("Last file I saw: " + (seen[0].get("summary") or seen[0].get("name") or ""))
+        if not k["facts"] and not bank:
+            lines.append("• Bank is empty — talk, upload, generate. I keep it.")
         return "\n".join(lines)
 
     def _help(self) -> str:
         return (
-            "Talk normally. I live here.\n"
-            "• Upload jpg / png / webp / zip / rar — I open them and steal palette + mood.\n"
-            "• Say “remember never put a person in skies.” I’ll pin it.\n"
-            "• “Inspire me” builds a prompt from your files + taste.\n"
-            "• Imagine page: load a photo, edit it, or make 360p–1080p / 4K video.\n"
-            "I’m not the Flux painter — I’m the one who remembers you between jobs."
+            "Talk normally. I live here, and I write into the Memory bank.\n"
+            "• Upload jpg / png / webp / zip / rar — I look, then lock what I saw.\n"
+            "• Say “remember never put a person in skies.” That is locked.\n"
+            "• “What do you remember?” reads the whole bank.\n"
+            "• “Inspire me” uses bank + files.\n"
+            "• Imagine is steered by the same bank. Sessions can be deleted; locked rows stay."
         )
 
     def _see(self, k: dict) -> str:
@@ -277,18 +293,22 @@ class Forge:
         ]
         if k["first_today"]:
             bits.append(f"New day. I’ve grown through {k['streak']} days of this.")
-        if k["facts"]:
+        bank = k.get("bank") or []
+        if bank:
+            bits.append("I still have: " + " | ".join((r.get("text") or "")[:90] for r in bank[:3]))
+        elif k["facts"]:
             bits.append("That sits next to: " + k["facts"][0])
         if k["echo"]:
             overlap = [e for e in k["echo"] if e in cleaned.lower()]
             if overlap:
-                bits.append("You’ve circled “" + overlap[0] + "” before. I kept it.")
+                bits.append("You’ve circled “" + overlap[0] + "” before. It’s in the bank.")
+        bits.append("Logged in the memory bank. I keep it unless you unlock and forget it.")
         bits.append(
             random.choice(
                 [
                     "Want me to turn that into an Imagine prompt, or look at a file?",
                     "Say inspire, or upload a pack, or tell me to remember something.",
-                    "I can remember that, or we can push it into a picture next.",
+                    "Ask what I remember if you want the whole bank.",
                 ]
             )
         )
