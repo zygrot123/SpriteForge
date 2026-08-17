@@ -10,6 +10,7 @@ from PIL import Image
 
 from ..engine.imagine import (
     ASPECTS,
+    EDIT_LOCK,
     FREE_STYLES,
     RESOLUTIONS,
     STRENGTHS,
@@ -196,7 +197,17 @@ class ImaginePage(ctk.CTkFrame):
         self.pick_lbl.configure(text=label, text_color=theme.ACCENT)
 
     def _refresh_compiled(self) -> str:
-        p = think_prompt(self._idea(), style=self.style.get(), think=self._think(), memory=self._memory())
+        idea = self._idea()
+        exact = not self._think()
+        extra = EDIT_LOCK if (self.still and Path(self.still).exists()) else ""
+        p = think_prompt(
+            idea,
+            style=self.style.get(),
+            think=self._think() and not exact,
+            memory="" if exact else self._memory(),
+            extra=extra,
+            exact=exact,
+        )
         self.compiled.delete("1.0", "end")
         self.compiled.insert("1.0", p)
         return p
@@ -231,6 +242,8 @@ class ImaginePage(ctk.CTkFrame):
                 self.app.client(), text, style=style, think=think,
                 width=w, height=h, seed=seed, memory=mem,
                 ref_path=src, denoise=self._denoise() if src else 1.0,
+                aspect=self.aspect.get(), preset=self.outres.get(),
+                exact=not think,
             )
 
         def done(paths, err):
@@ -350,6 +363,8 @@ class ImaginePage(ctk.CTkFrame):
                 self.app.client(), text, style=style, think=think,
                 seed=seed, memory=mem, count=count,
                 ref_path=src, denoise=denoise,
+                aspect=self.aspect.get(), preset=self.outres.get(),
+                exact=not think,
             )
 
         def done(paths, err):

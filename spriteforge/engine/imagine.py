@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import random
+import re
 import shutil
 from pathlib import Path
 
@@ -45,18 +46,30 @@ VARIANTS = (
 )
 
 EDIT_LOCK = (
-    "KEEP THIS PHOTO as the base. Apply ONLY the requested changes. "
-    "Add, remove, recolor, or restyle exactly as the words say. "
-    "Do not replace the subject or invent a new scene unless asked. "
-    "The result must still be recognizably this image."
+    "KEEP THIS PHOTO as the base. The change in the user's words MUST be visible. "
+    "If they asked for another sword in the left hand, the left hand holds a second sword. "
+    "Do not ignore any part of the request. Do not invent a new character or a new scene."
+)
+
+CHANGE_RE = re.compile(
+    r"\b(add|another|extra|second|put|give|hold|holding|wearing|remove|delete|"
+    r"change|make it|in his|in her|left hand|right hand|both hands)\b",
+    re.I,
 )
 
 STRENGTHS: dict[str, float] = {
-    "Tiny — keep almost everything": 0.22,
-    "Add / tweak — follow my words": 0.38,
-    "Restyle — new light and mood": 0.52,
-    "Transform — bigger change": 0.68,
+    "Tiny — keep almost everything": 0.28,
+    "Add / tweak — follow my words": 0.52,
+    "Restyle — new light and mood": 0.58,
+    "Transform — bigger change": 0.70,
 }
+
+EDIT_TRIES = (
+    "apply the user's words, the change must be clearly visible",
+    "same request again, do not skip it, make the change obvious",
+    "same request, keep identity, the new object or change is in frame",
+    "same request, follow every word, nothing extra",
+)
 
 UHD_LONG = 3840
 FLUX_PIXEL_CAP = 3840 * 2160
@@ -77,8 +90,17 @@ def think_prompt(
     think: bool = True,
     extra: str = "",
     memory: str = "",
+    exact: bool = False,
 ) -> str:
     idea = (text or "").strip()
+    if exact:
+        parts = [
+            f"Follow these words exactly, do not add a different story: {idea}",
+            f"Required: {idea}",
+        ]
+        if extra:
+            parts.append(extra)
+        return ", ".join(parts)
     if think:
         from .brain import understand
 
@@ -94,6 +116,59 @@ def think_prompt(
     if extra:
         parts.append(extra)
     return ", ".join(parts)
+
+
+def aspect_size(aspect: str, preset: str) -> tuple[int, int]:
+    aw, ah = ASPECTS.get(aspect, (1280, 720))
+    th = int(RESOLUTIONS.get(preset, 720))
+    tw = max(2, int(round(aw * (th / ah))))
+    if tw % 2:
+        tw += 1
+    if th % 2:
+        th += 1
+    long = max(tw, th)
+    if long > 3840:
+        s = 3840 / long
+        tw, th = int(tw * s) // 2 * 2, int(th * s) // 2 * 2
+    return tw, th
+
+
+def work_size(aspect: str, preset: str) -> tuple[int, int, int, int]:
+    """Flux work canvas + final output canvas (aspect + 360/480/720/1080/4K)."""
+    fw, fh = aspect_size(aspect, preset)
+    long = max(fw, fh)
+    if long > 1280:
+        s = 1280 / long
+        ww, wh = max(64, int(fw * s) // 2 * 2), max(64, int(fh * s) // 2 * 2)
+    else:
+        ww, wh = fw, fh
+    return snap16(ww), snap16(wh), fw, fh
+
+
+def fit_to_canvas(src: Path, width: int, height: int) -> Path:
+    """Center-crop the photo onto the chosen aspect, then scale."""
+    im = Image.open(src).convert("RGB")
+    sw, sh = im.size
+    src_r = sw / max(sh, 1)
+    dst_r = width / max(height, 1)
+    if src_r > dst_r:
+        nw = max(1, int(sh * dst_r))
+        x = (sw - nw) // 2
+        im = im.crop((x, 0, x + nw, sh))
+    else:
+        nh = max(1, int(sw / dst_r))
+        y = (sh - nh) // 2
+        im = im.crop((0, y, sw, y + nh))
+    im = im.resize((width, height), Image.Resampling.LANCZOS)
+    dest = unique_out(OUTPUTS, "canvas")
+    im.save(dest, "PNG")
+    return dest
+
+
+def effective_denoise(text: str, denoise: float) -> float:
+    if CHANGE_RE.search(text or "") and denoise < 0.5:
+        return 0.55
+    return float(denoise)
 
 
 def target_4k(width: int, height: int) -> tuple[int, int]:
@@ -153,18 +228,38 @@ def generate_variations(
     memory: str = "",
     ref_path: Path | str | None = None,
     denoise: float = 0.38,
+    aspect: str = "",
+    preset: str = "",
+    exact: bool = False,
 ) -> list[Path]:
     ensure_dirs()
     seed = seed if seed is not None else random.randint(1, 2**31 - 1)
+    exact = bool(exact or not think)
     extra = EDIT_LOCK if ref_path else ""
-    base = think_prompt(text, style=style, think=think, memory=memory, extra=extra)
+    base = think_prompt(
+        text, style=style, think=think and not exact, memory="" if exact else memory,
+        extra=extra, exact=exact,
+    )
     ref = Path(ref_path) if ref_path else None
-    if ref and ref.exists():
+    final_w = final_h = 0
+    if aspect and preset:
+        width, height, final_w, final_h = work_size(aspect, preset)
+    elif ref and ref.exists():
         width, height = fit_size(ref)
     width, height = snap16(width), snap16(height)
+    if ref and ref.exists() and aspect:
+        ref = fit_to_canvas(ref, width, height)
+    denoise = effective_denoise(text, denoise) if ref else 1.0
+    if exact:
+        guidance = max(float(guidance), 4.5)
+        steps = max(int(steps), 24)
+    hints = EDIT_TRIES if ref else VARIANTS
     out: list[Path] = []
-    for i, hint in enumerate(VARIANTS[: max(1, count)]):
-        prompt = f"{base}, variation {i + 1} of {count}: {hint}"
+    for i, hint in enumerate(hints[: max(1, count)]):
+        if exact:
+            prompt = f"{base}. Attempt {i + 1} of {count}: {hint}. Words again: {text}"
+        else:
+            prompt = f"{base}, variation {i + 1} of {count}: {hint}"
         raws = client.generate(
             prompt,
             seed=int(seed) + i * 9973,
@@ -180,7 +275,7 @@ def generate_variations(
             scale_height=height if ref else None,
         )
         dest = unique_out(OUTPUTS, f"imagine_v{i + 1}")
-        _save_rgb(raws[0], dest)
+        _save_rgb(raws[0], dest, (final_w, final_h) if final_w and final_h else None)
         try:
             if raws[0].resolve() != dest.resolve():
                 raws[0].unlink(missing_ok=True)
