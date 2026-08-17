@@ -17,6 +17,14 @@ from .memory import MemoryStore, _now, _read, _write, extract_phrases
 NAME_PAT = re.compile(r"\b(?:i am|i'm|im|my name is|call me)\s+([a-z][a-z0-9_\- ]{1,32})\b", re.I)
 REMEMBER_PAT = re.compile(r"\b(?:remember|don't forget|dont forget|note that)\s+(.+)$", re.I)
 FORGET_PAT = re.compile(r"\b(?:forget|unpin)\s+(.+)$", re.I)
+EDIT_ACT = re.compile(
+    r"\b(edit|change|add|make a|make him|make her|make the|put|remove|give him|give her|"
+    r"second|another|draw|paint|fix|replace)\b",
+    re.I,
+)
+VIDEO_ACT = re.compile(r"\b(video|animate|make it move|text to video|image to video|turn it into a video)\b", re.I)
+UPSCALE_ACT = re.compile(r"\b(upscale|4k|1080p|720p|make it bigger|make it larger)\b", re.I)
+IMG_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 
 def _day() -> str:
@@ -90,6 +98,15 @@ class Forge:
         return seen
 
     def reply(self, text: str, files: list[Path] | None = None) -> str:
+        return str(self.think(text, files).get("text") or "")
+
+    def think(
+        self,
+        text: str,
+        files: list[Path] | None = None,
+        last_image: Path | str | None = None,
+        xai_key: str = "",
+    ) -> dict:
         raw = (text or "").strip()
         files = [Path(p) for p in (files or []) if Path(p).exists()]
         seen = self.look(files) if files else []
@@ -155,8 +172,66 @@ class Forge:
 
         if raw:
             self.mind.note("chat", raw[:400], weight=1.5)
+
+        action = self._action(raw, files, last_image)
+        if action:
+            out = (
+                f"I'll do that on the file now.\n"
+                f"Action: {action['type']} → {Path(action['path']).name}\n"
+                f"{action.get('prompt') or raw}"
+            )
+            if xai_key:
+                smart = self._xai_say(raw, out, xai_key)
+                if smart:
+                    out = smart
+
         self._log("forge", out)
-        return out
+        return {"text": out, "action": action}
+
+    def _action(self, raw: str, files: list[Path], last_image: Path | str | None) -> dict | None:
+        img = None
+        for p in files:
+            if p.suffix.lower() in IMG_EXT:
+                img = p
+                break
+        if img is None and last_image and Path(last_image).exists():
+            img = Path(last_image)
+        if img is None:
+            return None
+        low = raw.lower()
+        if VIDEO_ACT.search(low):
+            return {"type": "video", "path": str(img), "prompt": raw, "duration": 4}
+        if UPSCALE_ACT.search(low) and not EDIT_ACT.search(low):
+            preset = "4K" if "4k" in low else "1080p" if "1080" in low else "720p"
+            return {"type": "upscale", "path": str(img), "prompt": raw, "preset": preset}
+        if EDIT_ACT.search(low):
+            from .imagine import interpret_edit
+
+            spec = interpret_edit(raw)
+            return {"type": "edit", "path": str(img), "prompt": spec["prompt"], "raw": raw}
+        return None
+
+    def _xai_say(self, user: str, fallback: str, key: str) -> str:
+        try:
+            from .xai import XAIClient
+
+            return XAIClient(key).chat(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are Forge, SpriteForge's local studio partner. "
+                            "Be concrete and brief. If an edit is happening, say what will change. "
+                            "You can edit images, make video, and remember the user."
+                        ),
+                    },
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": fallback},
+                    {"role": "user", "content": "Say that back in one short clear reply as Forge."},
+                ]
+            )
+        except Exception:
+            return ""
 
     def _compose(self, **k) -> str:
         low = k["low"]
@@ -233,12 +308,11 @@ class Forge:
 
     def _help(self) -> str:
         return (
-            "Talk normally. I live here, and I write into the Memory bank.\n"
-            "• Upload jpg / png / webp / zip / rar — I look, then lock what I saw.\n"
-            "• Say “remember never put a person in skies.” That is locked.\n"
-            "• “What do you remember?” reads the whole bank.\n"
-            "• “Inspire me” uses bank + files.\n"
-            "• Imagine is steered by the same bank. Sessions can be deleted; locked rows stay."
+            "Talk normally. I live here, write into the Memory bank, and I can edit files.\n"
+            "• Upload a png/jpg or use the last Imagine picture.\n"
+            "• “Add a second sword in his left hand” — I edit the file myself.\n"
+            "• “Make it a video” / “upscale to 1080” — I run those too.\n"
+            "• “Remember …” locks a fact. “What do you remember?” reads the bank."
         )
 
     def _see(self, k: dict) -> str:

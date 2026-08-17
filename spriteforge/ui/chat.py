@@ -28,8 +28,8 @@ class ChatPage(ctk.CTkFrame):
         ).pack(anchor="w", padx=18, pady=(16, 2))
         theme.muted(
             head,
-            "Forge writes every chat, name, and file into the same Hermes memory bank as Imagine. "
-            "Locked rows survive new sessions. Upload jpg, png, zip, or rar — I look and keep it.",
+            "Talk like you talk to me. Upload a picture and say “add a second sword in his left hand” — "
+            "Forge edits the file. It also remembers you in the memory bank.",
             wrap=820,
         ).pack(anchor="w", padx=18, pady=(0, 12))
 
@@ -112,17 +112,75 @@ class ChatPage(ctk.CTkFrame):
         files = list(self.files)
         forge = self._forge()
 
-        def work():
-            return forge.reply(text, files)
+        last = getattr(self.app, "last_image", None)
+        key = (self.app.cfg.get("xai_api_key") or "") if self.app.cfg.get("xai_enabled") else ""
 
-        def done(reply, err):
+        def work():
+            return forge.think(text, files, last_image=last, xai_key=key)
+
+        def done(payload, err):
             if err:
                 self.app.set_status(f"Forge failed: {err}", "err")
                 self.log.insert("end", f"Forge: I hit a snag — {err}\n\n")
                 return
+            payload = payload or {}
+            reply = payload.get("text") or ""
             self.log.insert("end", f"Forge: {reply}\n\n")
             self.log.see("end")
             self.app.refresh_memory_label()
-            self.app.set_status("Forge answered.", "ok")
+            action = payload.get("action")
+            if action:
+                self._run_action(action)
+            else:
+                self.app.set_status("Forge answered.", "ok")
 
-        self.app.run_job(work, done, "Forge is looking…")
+        self.app.run_job(work, done, "Forge is thinking…")
+
+    def _run_action(self, action: dict) -> None:
+        from ..engine.imagine import generate_variations, imagine_video, upscale_image
+
+        kind = action.get("type")
+        src = Path(action.get("path") or "")
+        prompt = action.get("prompt") or ""
+        if not src.exists():
+            self.app.set_status("No picture to edit. Upload one or generate first.", "warn")
+            return
+
+        def work():
+            if kind == "edit":
+                return generate_variations(
+                    self.app.client(),
+                    action.get("raw") or prompt,
+                    think=False,
+                    exact=True,
+                    count=1,
+                    ref_path=src,
+                    denoise=0.74,
+                    aspect="16:9",
+                    preset="720p",
+                )[0]
+            if kind == "video":
+                return imagine_video(
+                    self.app.client(), src, text=prompt, motion=prompt,
+                    think=False, duration=float(action.get("duration") or 4),
+                )
+            if kind == "upscale":
+                return upscale_image(self.app.client(), src, preset=action.get("preset") or "1080p", text=prompt)
+            raise RuntimeError(f"unknown action {kind}")
+
+        def done(path, err):
+            if err:
+                self.log.insert("end", f"Forge: Edit failed — {err}\n\n")
+                self.app.set_status(f"Forge edit failed: {err}", "err")
+                return
+            self.app.last_image = path
+            self.app.lib.record_output(path, {"kind": f"forge_{kind}", "prompt": prompt})
+            self.log.insert("end", f"Forge: Done. Saved {Path(path).name}\n\n")
+            self.log.see("end")
+            try:
+                os.startfile(path)
+            except OSError:
+                pass
+            self.app.set_status(f"Forge {kind} → {Path(path).name}", "ok")
+
+        self.app.run_job(work, done, f"Forge is {kind}ing the file…")

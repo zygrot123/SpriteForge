@@ -245,6 +245,7 @@ class ComfyClient:
         scheduler: str = "simple",
         scale_width: int | None = None,
         scale_height: int | None = None,
+        mask_name: str | None = None,
     ) -> dict:
         graph = {
             "1": {
@@ -280,6 +281,15 @@ class ComfyClient:
             }
             pixels = ["5b", 0]
         graph["6"] = {"class_type": "VAEEncode", "inputs": {"pixels": pixels, "vae": ["3", 0]}}
+        latent: list = ["6", 0]
+        if mask_name:
+            graph["5m"] = {"class_type": "LoadImage", "inputs": {"image": mask_name}}
+            graph["5n"] = {"class_type": "ImageToMask", "inputs": {"image": ["5m", 0], "channel": "red"}}
+            graph["6m"] = {
+                "class_type": "SetLatentNoiseMask",
+                "inputs": {"samples": ["6", 0], "mask": ["5n", 0]},
+            }
+            latent = ["6m", 0]
         graph.update({
             "7": {
                 "class_type": "KSampler",
@@ -293,7 +303,7 @@ class ComfyClient:
                     "denoise": float(denoise),
                     "positive": ["4", 0],
                     "negative": ["4", 0],
-                    "latent_image": ["6", 0],
+                    "latent_image": latent,
                 },
             },
             "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
@@ -368,6 +378,7 @@ class ComfyClient:
         cfg: float | None = None,
         scale_width: int | None = None,
         scale_height: int | None = None,
+        mask_path: str | Path | None = None,
     ) -> list[Path]:
         dest = dest_dir or OUTPUTS
         sdxl_cfg = float(cfg if cfg is not None else 6.0)
@@ -380,11 +391,13 @@ class ComfyClient:
             )
         elif ref_path:
             name = self.upload(Path(ref_path))
+            mask_name = self.upload(Path(mask_path)) if mask_path and Path(mask_path).exists() else None
             graph = self.flux_img2img(
                 prompt, name, seed=seed, steps=steps, denoise=denoise,
                 guidance=guidance, prefix=prefix,
                 sampler_name=sampler_name, scheduler=scheduler,
                 scale_width=scale_width, scale_height=scale_height,
+                mask_name=mask_name,
             )
         else:
             graph = self.flux_txt2img(

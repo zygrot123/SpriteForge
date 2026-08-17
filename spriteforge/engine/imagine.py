@@ -172,9 +172,70 @@ def fit_to_canvas(src: Path, width: int, height: int) -> Path:
 
 
 def effective_denoise(text: str, denoise: float) -> float:
-    if CHANGE_RE.search(text or "") and denoise < 0.5:
-        return 0.55
-    return float(denoise)
+    spec = interpret_edit(text)
+    return max(float(denoise), spec["denoise"])
+
+
+def interpret_edit(text: str) -> dict:
+    """Turn 'add a second sword in his left hand' into a visible end-state."""
+    raw = (text or "").strip()
+    low = raw.lower()
+    hand = "left" if re.search(r"\bleft\b", low) else "right" if re.search(r"\bright\b", low) else ""
+    weapon = bool(re.search(r"\b(sword|blade|weapon|axe|spear|shield|staff|gun)\b", low))
+    second = bool(re.search(r"\b(second|another|extra|two|dual)\b", low))
+    if weapon and (second or hand):
+        side = hand or "left"
+        other = "right" if side == "left" else "left"
+        return {
+            "prompt": (
+                f"the exact same character from the photo, now dual-wielding. "
+                f"The {other} hand still holds the original weapon. "
+                f"The {side} hand now firmly grips a SECOND matching sword, full blade visible. "
+                f"Both hands occupy a weapon. An empty {side} hand is WRONG. "
+                f"Same face, same armor, same cape, same scene. Request: {raw}"
+            ),
+            "region": f"{side}_hand",
+            "denoise": 0.74,
+            "forbid": f"empty {side} hand, only one sword, missing second sword, unarmed {side}",
+        }
+    if re.search(r"\b(night|dusk|sunset|rain|snow|fog)\b", low):
+        return {"prompt": f"the exact same scene and character, {raw}, same face and costume", "region": "full", "denoise": 0.48, "forbid": "new character"}
+    if CHANGE_RE.search(raw):
+        return {
+            "prompt": (
+                f"the exact same character and scene from the photo, with this change clearly visible: {raw}. "
+                f"Do not leave the image unchanged. The request must show in the picture."
+            ),
+            "region": "auto",
+            "denoise": 0.66,
+            "forbid": "unchanged photo, missing the requested change",
+        }
+    return {"prompt": raw, "region": "full", "denoise": 0.52, "forbid": ""}
+
+
+def make_region_mask(src: Path, region: str) -> Path:
+    """White = edit this area. Character facing camera: their left hand is on the viewer's right."""
+    im = Image.open(src).convert("RGB")
+    w, h = im.size
+    mask = Image.new("L", (w, h), 0)
+    from PIL import ImageDraw, ImageFilter as _IF
+
+    d = ImageDraw.Draw(mask)
+    if region in {"left_hand", "auto"}:
+        # character's left = image right
+        cx, cy = int(w * 0.74), int(h * 0.58)
+        rx, ry = int(w * 0.28), int(h * 0.32)
+    elif region == "right_hand":
+        cx, cy = int(w * 0.26), int(h * 0.58)
+        rx, ry = int(w * 0.28), int(h * 0.32)
+    else:
+        cx, cy = w // 2, int(h * 0.55)
+        rx, ry = int(w * 0.45), int(h * 0.40)
+    d.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=255)
+    mask = mask.filter(_IF.GaussianBlur(radius=max(8, w // 40)))
+    dest = unique_out(OUTPUTS, "edit_mask")
+    mask.convert("RGB").save(dest, "PNG")
+    return dest
 
 
 def target_4k(width: int, height: int) -> tuple[int, int]:
@@ -241,9 +302,13 @@ def generate_variations(
     ensure_dirs()
     seed = seed if seed is not None else random.randint(1, 2**31 - 1)
     exact = bool(exact or not think)
+    spec = interpret_edit(text) if ref_path else {"prompt": text, "region": "full", "denoise": denoise, "forbid": ""}
+    idea = spec["prompt"]
     extra = EDIT_LOCK if ref_path else ""
+    if spec.get("forbid"):
+        extra = (extra + " Must not be: " + spec["forbid"]) if extra else "Must not be: " + spec["forbid"]
     base = think_prompt(
-        text, style=style, think=think and not exact, memory="" if exact else memory,
+        idea, style=style, think=think and not exact, memory="" if exact else memory,
         extra=extra, exact=exact,
     )
     ref = Path(ref_path) if ref_path else None
@@ -256,14 +321,21 @@ def generate_variations(
     if ref and ref.exists() and aspect:
         ref = fit_to_canvas(ref, width, height)
     denoise = effective_denoise(text, denoise) if ref else 1.0
-    if exact:
-        guidance = max(float(guidance), 4.5)
-        steps = max(int(steps), 24)
+    mask_path = None
+    if ref and ref.exists() and spec.get("region") not in {"", "full"}:
+        mask_path = make_region_mask(ref, spec["region"])
+    if exact or ref:
+        guidance = max(float(guidance), 5.0)
+        steps = max(int(steps), 28)
     hints = EDIT_TRIES if ref else VARIANTS
     out: list[Path] = []
     for i, hint in enumerate(hints[: max(1, count)]):
-        if exact:
-            prompt = f"{base}. Attempt {i + 1} of {count}: {hint}. Words again: {text}"
+        if ref:
+            prompt = (
+                f"{base}. {hint}. "
+                f"The finished picture must show: {idea}. "
+                f"Original words: {text}"
+            )
         else:
             prompt = f"{base}, variation {i + 1} of {count}: {hint}"
         raws = client.generate(
@@ -279,6 +351,7 @@ def generate_variations(
             denoise=float(denoise),
             scale_width=width if ref else None,
             scale_height=height if ref else None,
+            mask_path=mask_path,
         )
         dest = unique_out(OUTPUTS, f"imagine_v{i + 1}")
         _save_rgb(raws[0], dest, (final_w, final_h) if final_w and final_h else None)

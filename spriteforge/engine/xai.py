@@ -46,6 +46,23 @@ class XAIClient:
             dest.write_bytes(resp.read())
         return dest
 
+    def chat(self, messages: list[dict], model: str = "grok-3-mini") -> str:
+        last_err = None
+        for mid in (model, "grok-3", "grok-4-1-fast-non-reasoning"):
+            try:
+                data = self._post(
+                    "/chat/completions",
+                    {"model": mid, "messages": messages, "temperature": 0.4},
+                )
+                choice = (data.get("choices") or [{}])[0]
+                text = ((choice.get("message") or {}).get("content") or "").strip()
+                if text:
+                    return text
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                continue
+        raise XAIError(f"Chat failed: {last_err}")
+
     def generate(self, prompt: str, dest: Path | None = None) -> Path:
         dest = dest or (OUTPUTS / "xai.png")
         data = self._post(

@@ -17,6 +17,7 @@ from ..engine.imagine import (
     generate_variations,
     imagine_video,
     import_local,
+    interpret_edit,
     scale_video,
     think_prompt,
     upscale_image,
@@ -203,6 +204,8 @@ class ImaginePage(ctk.CTkFrame):
     def _refresh_compiled(self) -> str:
         idea = self._idea()
         exact = not self._think()
+        if self.still and Path(self.still).exists():
+            idea = interpret_edit(idea)["prompt"]
         extra = EDIT_LOCK if (self.still and Path(self.still).exists()) else ""
         p = think_prompt(
             idea,
