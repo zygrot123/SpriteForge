@@ -5,8 +5,10 @@ import os
 import random
 from pathlib import Path
 
+import tkinter as tk
+
 import customtkinter as ctk
-from PIL import Image
+from PIL import Image, ImageTk
 
 from ..engine.dungeon import (
     KIND,
@@ -144,19 +146,28 @@ class FloorsPage(ctk.CTkFrame):
         right.grid(row=0, column=1, sticky="nsew", padx=16, pady=16)
         right.grid_rowconfigure(0, weight=1)
         right.grid_columnconfigure(0, weight=1)
-        self.canvas = ctk.CTkLabel(right, text="Generate a map, or paint a floor tile.", text_color=theme.MUTED, fg_color=theme.CARD, corner_radius=12)
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-        self.hover_lbl = ctk.CTkLabel(right, text="Click a cell to place. Drag to paint. R rotates.", text_color=theme.MUTED, anchor="w")
+        self.board = tk.Canvas(right, bg=theme.CARD, highlightthickness=0, bd=0)
+        self.board.grid(row=0, column=0, sticky="nsew")
+        self.hover_lbl = ctk.CTkLabel(right, text="Click a cell to place. Drag to paint. Use Rotate 90°.", text_color=theme.MUTED, anchor="w")
         self.hover_lbl.grid(row=1, column=0, sticky="ew", pady=(10, 0))
 
-        self.canvas.bind("<Button-1>", self._click)
-        self.canvas.bind("<B1-Motion>", self._drag)
-        self.canvas.bind("<ButtonRelease-1>", self._release)
-        self.canvas.bind("<Motion>", self._move)
-        # CustomTkinter forbids bind_all on CTk widgets — bind the root window.
-        self.app.bind("<KeyPress-r>", self._rotate, add="+")
-        self.app.bind("<KeyPress-R>", self._rotate, add="+")
+        self.board.bind("<Button-1>", self._click)
+        self.board.bind("<B1-Motion>", self._drag)
+        self.board.bind("<ButtonRelease-1>", self._release)
+        self.board.bind("<Motion>", self._move)
+        self.board.bind("<KeyPress-r>", self._rotate)
+        self.board.bind("<KeyPress-R>", self._rotate)
+        self._resize_job = None
+        self.board.bind("<Configure>", self._on_resize)
         self.after(200, self.redraw)
+
+    def _on_resize(self, _e=None) -> None:
+        if self._resize_job:
+            try:
+                self.after_cancel(self._resize_job)
+            except Exception:
+                pass
+        self._resize_job = self.after(80, self.redraw)
 
     def _slider(self, parent, title, lo, hi, value):
         from .controls import _ValueSlider
@@ -329,8 +340,8 @@ class FloorsPage(ctk.CTkFrame):
         ox, oy = self._origin
         sw, sh = self._shown
         fw, fh = self._full
-        lx = event.x - ox
-        ly = event.y - oy
+        lx = int(event.x) - ox
+        ly = int(event.y) - oy
         if lx < 0 or ly < 0 or lx > sw or ly > sh:
             return None
         scale_x = fw / max(sw, 1)
@@ -361,6 +372,7 @@ class FloorsPage(ctk.CTkFrame):
         self.app.set_status(f"{name} @ {x},{y}  rot {self.rot * 90}°", "ok")
 
     def _click(self, event) -> None:
+        self.board.focus_set()
         self._drag_stroke = True
         self._apply(self._cell_at(event), stroke=False)
 
@@ -395,8 +407,8 @@ class FloorsPage(ctk.CTkFrame):
         self.hover_lbl.configure(text=f"Cell {x},{y}  ·  {have}{pin}{torch}  ·  placing {self.hand} {self.rot * 90}°")
 
     def redraw(self) -> None:
-        w = max(self.canvas.winfo_width(), 200)
-        h = max(self.canvas.winfo_height(), 200)
+        w = max(self.board.winfo_width(), 200)
+        h = max(self.board.winfo_height(), 200)
         if w < 40 or h < 40:
             self.after(120, self.redraw)
             return
@@ -406,16 +418,6 @@ class FloorsPage(ctk.CTkFrame):
         self._full = raw.size
         self._shown = img.size
         self._origin = ((w - img.size[0]) // 2, (h - img.size[1]) // 2)
-        photo = _thumb_from(img)
-        if photo:
-            self._photo = photo
-            self.canvas.configure(image=photo, text="")
-
-
-def _thumb_from(im: Image.Image):
-    try:
-        from customtkinter import CTkImage
-
-        return CTkImage(light_image=im.convert("RGB"), dark_image=im.convert("RGB"), size=im.size)
-    except Exception:
-        return None
+        self._photo = ImageTk.PhotoImage(img.convert("RGB"))
+        self.board.delete("all")
+        self.board.create_image(w // 2, h // 2, image=self._photo, anchor="center")
