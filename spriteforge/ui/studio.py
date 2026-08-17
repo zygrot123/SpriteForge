@@ -169,6 +169,8 @@ class GeneratePage(ctk.CTkFrame):
         ctk.CTkButton(actions, text="Open folder", fg_color=theme.CARD, command=self.open_folder).pack(side="left", padx=4)
 
     def _on_present(self, label: str) -> None:
+        if not hasattr(self, "view") or not hasattr(self, "style"):
+            return
         _k, spec = presentation_by_label(label)
         if spec.get("view") in VIEWS:
             self.view.set(spec["view"])
@@ -563,12 +565,6 @@ class AnimatePage(ctk.CTkFrame):
         self.anim.pack(padx=16, pady=6)
         self.hint = ctk.CTkLabel(form, text="", text_color=theme.MUTED, wraplength=300, justify="left")
         self.hint.pack(padx=16, pady=(0, 8), anchor="w")
-        self.present = ctk.CTkOptionMenu(
-            form, values=presentation_labels(), width=300, fg_color=theme.CARD, command=self._on_present_anim,
-        )
-        self.present.set(PRESENTATIONS["hades"]["label"])
-        self.present.pack(padx=16, pady=6)
-        self._on_present_anim(self.present.get())
         self.dirs = ctk.CTkOptionMenu(
             form,
             values=["This view only"] + [k for k in DIR_SETS if k != "this"],
@@ -579,6 +575,12 @@ class AnimatePage(ctk.CTkFrame):
         self.dirs.pack(padx=16, pady=6)
         self.view = ctk.CTkOptionMenu(form, values=_view_labels(), width=300, fg_color=theme.CARD)
         self.view.pack(padx=16, pady=6)
+        self.present = ctk.CTkOptionMenu(
+            form, values=presentation_labels(), width=300, fg_color=theme.CARD, command=self._on_present_anim,
+        )
+        self.present.set(PRESENTATIONS["hades"]["label"])
+        self.present.pack(padx=16, pady=6)
+        self._on_present_anim(self.present.get())
         self.strength = ctk.CTkOptionMenu(
             form, values=[v["label"] for v in LOCK_STRENGTH.values()], width=300, fg_color=theme.CARD,
         )
@@ -695,6 +697,8 @@ class AnimatePage(ctk.CTkFrame):
         self.app.set_status(f"Saved “{card['name']}”. Any locked sprite can play it now.", "ok")
 
     def _on_present_anim(self, label: str) -> None:
+        if not hasattr(self, "dirs") or not hasattr(self, "view"):
+            return
         _k, spec = presentation_by_label(label)
         if spec.get("dirs") and spec["dirs"] in DIR_SETS:
             self.dirs.set(spec["dirs"])
