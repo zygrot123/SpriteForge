@@ -24,6 +24,7 @@ from ..engine.imagine import (
 from ..engine.assets import unique_out
 from ..paths import OUTPUTS, VIDEOS
 from . import theme
+from .controls import _ValueSlider
 from .mic import attach_mic
 from .studio import _thumb
 
@@ -112,6 +113,8 @@ class ImaginePage(ctk.CTkFrame):
         self.motion.pack(fill="x", padx=18)
         self.motion.insert("1.0", "slow camera push-in, light breathing, clouds and water living")
         attach_mic(form, self.motion, self.app)
+        self.duration = _ValueSlider(form, "Video length (seconds)", 2, 10, 4, integer=True)
+        self.duration.pack(fill="x", padx=18, pady=(8, 0))
         self.use_mem = ctk.CTkCheckBox(form, text="Use evolving memory (profile taste)")
         self.use_mem.pack(anchor="w", padx=18, pady=(10, 0))
         if self.app.cfg.get("use_memory", True):
@@ -130,7 +133,8 @@ class ImaginePage(ctk.CTkFrame):
             command=self.upscale_video,
         ).pack(fill="x", padx=18, pady=4)
         ctk.CTkButton(
-            form, text="Text → video", height=36, fg_color=theme.CARD, command=self.text_video,
+            form, text="Text → video", height=40, fg_color=theme.WARM, hover_color="#d45544",
+            command=self.text_video,
         ).pack(fill="x", padx=18, pady=4)
         ctk.CTkButton(form, text="Open outputs", fg_color=theme.CARD, command=lambda: os.startfile(OUTPUTS)).pack(
             fill="x", padx=18, pady=(10, 4)
@@ -399,11 +403,17 @@ class ImaginePage(ctk.CTkFrame):
         if not text:
             self.app.set_status("Write an idea first.", "warn")
             return
-        src = self._selected()
+        src = None
+        if self.still and Path(self.still).exists():
+            src = Path(self.still)
+        elif self.picked and self.vars and Path(self.picked).exists() and Path(self.picked) in [Path(p) for p in self.vars]:
+            src = Path(self.picked)
         w, h = ASPECTS[self.aspect.get()]
         style = self.style.get()
         think = self._think()
         motion = self._motion()
+
+        seconds = float(self.duration.get())
 
         def work():
             still = src
@@ -411,11 +421,14 @@ class ImaginePage(ctk.CTkFrame):
                 ones = generate_variations(
                     self.app.client(), text, style=style, think=think,
                     width=w, height=h, count=1,
+                    aspect=self.aspect.get(), preset=self.outres.get(),
+                    exact=not think, memory="" if not think else self._memory(),
                 )
                 still = ones[0]
             return still, imagine_video(
-                self.app.client(), still, text=text, motion=motion, style=style, think=think,
+                self.app.client(), still, text=text, motion=motion, style=style, think=False,
                 out_height=RESOLUTIONS.get(self.outres.get(), 720),
+                duration=seconds,
             )
 
         def done(payload, err):
@@ -427,10 +440,10 @@ class ImaginePage(ctk.CTkFrame):
             self.app.last_video = path
             self.app.mind.note("video", text, style=style, aspect=self.aspect.get(), weight=2.0, path=str(path))
             self.app.refresh_memory_label()
-            self.app.set_status(f"Video ready → {path.name}", "ok")
+            self.app.set_status(f"Text → video ({int(seconds)}s, same hero) → {path.name}", "ok")
             os.startfile(path)
 
-        self.app.run_job(work, done, "Text → video…")
+        self.app.run_job(work, done, f"Text → video, {int(seconds)} seconds, locking the same face…")
 
     def _run_video(self, src: Path) -> None:
         text = self._idea()
@@ -439,11 +452,12 @@ class ImaginePage(ctk.CTkFrame):
         motion = self._motion()
 
         height = RESOLUTIONS.get(self.outres.get(), 720)
+        seconds = float(self.duration.get())
 
         def work():
             return imagine_video(
-                self.app.client(), src, text=text, motion=motion, style=style, think=think,
-                out_height=height,
+                self.app.client(), src, text=text, motion=motion, style=style, think=False,
+                out_height=height, duration=seconds,
             )
 
         def done(path, err):
@@ -453,14 +467,14 @@ class ImaginePage(ctk.CTkFrame):
             self.app.last_video = path
             self.app.mind.note("video", text, style=style, aspect=self.aspect.get(), weight=2.0, path=str(path))
             self.app.refresh_memory_label()
-            self.app.set_status(f"Video ready ({self.outres.get()}) → {path.name}", "ok")
+            self.app.set_status(f"Video ready ({self.outres.get()}, {int(seconds)}s, same hero) → {path.name}", "ok")
             os.startfile(path)
             try:
                 os.startfile(VIDEOS)
             except OSError:
                 pass
 
-        self.app.run_job(work, done, f"Animating your photo at {self.outres.get()}…")
+        self.app.run_job(work, done, f"Animating {int(seconds)}s at {self.outres.get()}, same face…")
 
     def upscale_video(self) -> None:
         src = getattr(self.app, "last_video", None)

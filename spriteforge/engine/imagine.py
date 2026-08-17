@@ -51,6 +51,12 @@ EDIT_LOCK = (
     "Do not ignore any part of the request. Do not invent a new character or a new scene."
 )
 
+HERO_LOCK = (
+    "SAME HERO IN EVERY FRAME. Same face, same eyes, same nose, same jaw, "
+    "same hair, same helmet or crown, same armor, same colors, same body. "
+    "One person, one continuous shot. Do not redesign. Do not cast a new actor."
+)
+
 CHANGE_RE = re.compile(
     r"\b(add|another|extra|second|put|give|hold|holding|wearing|remove|delete|"
     r"change|make it|in his|in her|left hand|right hand|both hands)\b",
@@ -372,6 +378,14 @@ def upscale_image(
     return dest
 
 
+def video_frame_plan(duration: float) -> tuple[int, float]:
+    """Unique Flux frames + fps so the clip lasts `duration` seconds."""
+    seconds = min(10.0, max(2.0, float(duration)))
+    nframes = min(24, max(8, int(round(seconds * 6))))
+    fps = max(2.0, nframes / seconds)
+    return nframes, fps
+
+
 def imagine_video(
     client,
     src: Path,
@@ -387,10 +401,14 @@ def imagine_video(
     seed: int | None = None,
     max_long: int = 1280,
     out_height: int | None = None,
+    duration: float | None = None,
 ) -> Path:
-    """Image-to-video that keeps the full picture — no chroma punch-out."""
+    """Animate one still. Every frame img2img's the original hero so the face does not swap."""
     ensure_dirs()
     src = Path(src)
+    if duration:
+        nframes, fps = video_frame_plan(duration)
+    nframes = max(2, int(nframes))
     seed = seed if seed is not None else random.randint(1, 2**31 - 1)
     im = Image.open(src).convert("RGB")
     w, h = im.size
@@ -407,40 +425,41 @@ def imagine_video(
     folder = FRAMES / unique_out(FRAMES, "imagine_vid").stem
     folder.mkdir(parents=True, exist_ok=True)
     desire = (motion or "").strip() or (text or "").strip() or "subtle living atmosphere, slow camera push-in"
-    prompt = think_prompt(
-        text or "this same image, now moving",
-        style=style,
-        think=think,
-        extra=(
-            f"{EDIT_LOCK} "
-            f"continuous cinematic shot of THIS image. Follow this desire: {desire}. "
-            "Keep the same subject and layout. No cut, no new hero unless asked."
-        ),
-    )
-    frames: list[Path] = []
-    first = folder / "00.png"
-    im.resize((vw, vh), Image.Resampling.LANCZOS).save(first)
-    frames.append(first)
-    last = first
-    for i in range(1, max(2, nframes)):
+    hero = folder / "hero.png"
+    im.resize((vw, vh), Image.Resampling.LANCZOS).save(hero)
+    frames: list[Path] = [hero]
+    for i in range(1, nframes):
+        t = i / max(nframes - 1, 1)
+        prompt = think_prompt(
+            text or "this same image, now moving",
+            style=style,
+            think=False,
+            exact=True,
+            extra=(
+                f"{HERO_LOCK} Motion only: {desire}. "
+                f"Progress {int(t * 100)} percent through that motion. "
+                "Do not change the face or costume. Camera and cloth may move slightly."
+            ),
+        )
         raws = client.generate(
-            f"{prompt}, animation frame {i + 1} of {nframes}",
-            seed=seed + i,
-            steps=steps,
+            prompt,
+            seed=seed,
+            steps=max(14, int(steps)),
             width=vw,
             height=vh,
-            guidance=guidance,
-            ref_path=last,
-            denoise=0.34,
+            guidance=max(float(guidance), 4.0),
+            ref_path=hero,
+            denoise=0.18 + 0.06 * t,
             prefix=f"imagine_f{i:02d}",
             dest_dir=folder,
+            scale_width=vw,
+            scale_height=vh,
         )
         dest = folder / f"{i:02d}.png"
         _save_rgb(raws[0], dest, (vw, vh))
-        last = dest
         frames.append(dest)
     dest = unique_out(VIDEOS, "imagine", ext=".mp4")
-    frames_to_mp4(frames, dest, fps=fps)
+    frames_to_mp4(frames, dest, fps=max(1, int(round(fps))))
     if out_height and abs(int(out_height) - vh) > 4:
         scaled = dest.with_name(dest.stem + f"_{int(out_height)}p.mp4")
         dest = scale_video(dest, scaled, int(out_height))
