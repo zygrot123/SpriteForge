@@ -10,7 +10,7 @@ Track this repo in **GitHub Desktop** (File → Add local repository → `Sprite
 - **Lock model** — save a character as an exact identity (description + reference image + seed). Later images start from that reference instead of rolling a new person.
 - **Animations** — idle, walk, run, attack, cast, hurt, death, jump, dash, turnaround. Each frame is img2img from the previous one so the model stays the same.
 - **Structures** — buildings, dungeon pieces, tiles, props, trees, furniture, pillars, gates.
-- **Floors** — Seeing Eyes-style local dungeon builder. Paint floor / hall / water / cave tiles, press R to rotate, Generate fills the rest so openings meet. Bake a matching Flux kit, then export isometric + top-down PNG or a zip.
+- **Floors** — Seeing Eyes-style local dungeon builder. Paint tiles, upload your own sprites, or send a Structure / Scene / Imagine result into a slot or backdrop. Generate fills openings. Export PNG or zip.
 - **Sheets** — overlay a grid, slice a sheet, compose a folder of frames, preview the loop.
 
 ## Run (this PC, from source)
@@ -19,7 +19,7 @@ Double-click `launch.bat`.
 
 ## Download the EXE (Release)
 
-**[SpriteForge v1.0.12 — Windows zip](https://github.com/zygrot123/SpriteForge/releases/tag/v1.0.12)**
+**[SpriteForge v1.0.13 — Windows zip](https://github.com/zygrot123/SpriteForge/releases/tag/v1.0.13)**
 
 Unzip the whole folder, then run `SpriteForge.exe`. Keep `_internal` next to the exe.
 

@@ -34,6 +34,11 @@ class SpriteForgeApp(ctk.CTk):
         self.last_frames: list = []
         self.last_sheet = None
         self.last_video = None
+        self.last_structure = None
+        self.last_scene = None
+        self.hold_path = None
+        self.hold_kind = ""
+        self.hold_label = ""
         self._pages: dict[str, ctk.CTkFrame] = {}
         self._nav_btns: dict[str, ctk.CTkButton] = {}
         self._clock: JobClock | None = None
@@ -132,7 +137,18 @@ class SpriteForgeApp(ctk.CTk):
             text_color=theme.MUTED,
             font=ctk.CTkFont(family="Segoe UI", size=12),
         )
-        self.comfy_dot.pack(side="bottom", padx=18, pady=18, anchor="w")
+        self.comfy_dot.pack(side="bottom", padx=18, pady=(4, 14), anchor="w")
+
+        hold = ctk.CTkFrame(side, fg_color=theme.CARD, corner_radius=8)
+        hold.pack(side="bottom", fill="x", padx=12, pady=(0, 8))
+        ctk.CTkLabel(hold, text="IN HAND", text_color=theme.ACCENT, font=ctk.CTkFont("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(8, 0))
+        self.hold_lbl = ctk.CTkLabel(hold, text="Nothing held. Generate, then send it here.", text_color=theme.MUTED, wraplength=170, justify="left", anchor="w")
+        self.hold_lbl.pack(fill="x", padx=10, pady=(2, 6))
+        hrow = ctk.CTkFrame(hold, fg_color="transparent")
+        hrow.pack(fill="x", padx=8, pady=(0, 8))
+        ctk.CTkButton(hrow, text="Floors", width=54, height=24, fg_color=theme.WARM, command=self._hold_to_floors).pack(side="left")
+        ctk.CTkButton(hrow, text="Imagine", width=62, height=24, fg_color=theme.ACCENT_DIM, command=self._hold_to_imagine).pack(side="left", padx=4)
+        ctk.CTkButton(hrow, text="×", width=28, height=24, fg_color=theme.CARD, command=self.clear_hold).pack(side="left")
 
     def _build_body(self) -> None:
         self.body = ctk.CTkFrame(self, fg_color=theme.BG, corner_radius=0)
@@ -204,6 +220,67 @@ class SpriteForgeApp(ctk.CTk):
     def refresh_memory_label(self) -> None:
         if hasattr(self, "memory_lbl"):
             self.memory_lbl.configure(text=self.mind.summary())
+
+    def hold(self, path, kind: str = "image", label: str = "") -> None:
+        p = Path(path) if path else None
+        if not p or not p.exists():
+            self.set_status("That file is missing.", "warn")
+            return
+        self.hold_path = p
+        self.hold_kind = kind or "image"
+        self.hold_label = label or p.name
+        self.last_image = p
+        if kind.startswith("struct") or kind in {"tile", "dungeon", "building", "gate", "prop"}:
+            self.last_structure = p
+        if kind.startswith("scene") or kind in {"floor", "wall", "water", "sky", "backdrop", "interior"}:
+            self.last_scene = p
+        if hasattr(self, "hold_lbl"):
+            self.hold_lbl.configure(text=f"{self.hold_label}", text_color=theme.TEXT)
+        self.set_status(f"In hand: {p.name} — send it to Floors or Imagine.", "ok")
+
+    def clear_hold(self) -> None:
+        self.hold_path = None
+        self.hold_kind = ""
+        self.hold_label = ""
+        if hasattr(self, "hold_lbl"):
+            self.hold_lbl.configure(text="Nothing held. Generate, then send it here.", text_color=theme.MUTED)
+        self.set_status("Cleared the tray.", "info")
+
+    def send_to_floors(self, path, slot: str = "floor") -> None:
+        p = Path(path)
+        if not p.exists():
+            self.set_status("That file is missing.", "warn")
+            return
+        self.hold(p, kind=slot, label=p.name)
+        self.show("floors")
+        page = self._pages.get("floors")
+        if page and hasattr(page, "receive"):
+            page.receive(p, slot)
+
+    def send_to_imagine(self, path) -> None:
+        p = Path(path)
+        if not p.exists():
+            self.set_status("That file is missing.", "warn")
+            return
+        self.hold(p, kind="image", label=p.name)
+        self.show("imagine")
+        page = self._pages.get("imagine")
+        if page and hasattr(page, "_show_src"):
+            page._show_src(p, "From another tab")
+
+    def _hold_to_floors(self) -> None:
+        if not self.hold_path:
+            self.set_status("Hold an image first — generate or pick one.", "warn")
+            return
+        from ..engine.carry import suggest_slot
+
+        self.send_to_floors(self.hold_path, suggest_slot(self.hold_kind))
+
+    def _hold_to_imagine(self) -> None:
+        if not self.hold_path:
+            self.set_status("Hold an image first — generate or pick one.", "warn")
+            return
+        self.send_to_imagine(self.hold_path)
 
     def set_status(self, text: str, kind: str = "info") -> None:
         colors = {"info": theme.MUTED, "ok": theme.OK, "warn": theme.WARN, "err": theme.WARM}

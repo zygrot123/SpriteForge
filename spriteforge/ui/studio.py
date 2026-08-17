@@ -169,6 +169,8 @@ class GeneratePage(ctk.CTkFrame):
         self.lock_name = ctk.CTkEntry(actions, placeholder_text="Model name, e.g. Vane")
         self.lock_name.pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(actions, text="Lock as exact model", fg_color=theme.ACCENT_DIM, hover_color="#24665c", command=self.lock_model).pack(side="left", padx=4)
+        ctk.CTkButton(actions, text="To Floors", fg_color=theme.WARM, command=lambda: self.app.send_to_floors(self.last_path or self.app.last_image, "grave")).pack(side="left", padx=4)
+        ctk.CTkButton(actions, text="To Imagine", fg_color=theme.ACCENT_DIM, command=lambda: self.app.send_to_imagine(self.last_path or self.app.last_image)).pack(side="left", padx=4)
         ctk.CTkButton(actions, text="Open folder", fg_color=theme.CARD, command=self.open_folder).pack(side="left", padx=4)
 
     def _on_present(self, label: str) -> None:
@@ -310,6 +312,7 @@ class GeneratePage(ctk.CTkFrame):
             paths, metas = payload["paths"], payload["metas"]
             self.last_path = paths[0]
             self.app.last_image = paths[0]
+            self.app.hold(paths[0], kind="sprite", label=paths[0].name)
             if payload.get("lock") and hold:
                 self.session_lock = Path(payload["lock"])
             elif not hold and paths:

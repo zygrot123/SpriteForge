@@ -170,6 +170,28 @@ class ImaginePage(ctk.CTkFrame):
         self.hero.grid(row=1, column=0, sticky="nsew")
         self.pick_lbl = ctk.CTkLabel(right, text="Nothing selected", text_color=theme.MUTED, anchor="w")
         self.pick_lbl.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        send = ctk.CTkFrame(right, fg_color="transparent")
+        send.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        ctk.CTkButton(send, text="Hold", width=80, fg_color=theme.CARD, command=self._hold).pack(side="left")
+        ctk.CTkButton(send, text="Send to Floors", width=120, fg_color=theme.WARM, command=self._to_floors).pack(side="left", padx=6)
+
+    def _selected_or_last(self):
+        src = self._selected()
+        return src
+
+    def _hold(self) -> None:
+        src = self._selected()
+        if not src:
+            self.app.set_status("Pick or load an image first.", "warn")
+            return
+        self.app.hold(src, kind="image", label=src.name)
+
+    def _to_floors(self) -> None:
+        src = self._selected()
+        if not src:
+            self.app.set_status("Pick or load an image first.", "warn")
+            return
+        self.app.send_to_floors(src, "floor")
 
     def _idea(self) -> str:
         return self.prompt.get("1.0", "end").strip()

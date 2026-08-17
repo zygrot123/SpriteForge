@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import os
 import random
+import shutil
 from pathlib import Path
+from tkinter import filedialog
 
 import tkinter as tk
 
@@ -29,6 +31,8 @@ from ..engine.dungeon import (
     solve_steps,
     stamp_features,
 )
+from ..engine.assets import unique_out
+from ..engine.carry import SLOTS, suggest_slot
 from ..engine.prompts import STYLES
 from ..paths import MAPS
 from . import theme
@@ -64,9 +68,8 @@ class FloorsPage(ctk.CTkFrame):
         ).pack(anchor="w", padx=18, pady=(18, 4))
         theme.muted(
             form,
-            "Seeing Eyes-style builder, all local. Pick a tile, click or drag to place, "
-            "press R to rotate. Generate fills the rest so openings meet. "
-            "Bake kit paints matching Flux tiles for this dungeon.",
+            "Build the final map here. Generate a structure or scene, then Send to Floors. "
+            "Or upload your own sprites. Paint, rotate, generate — openings meet.",
             wrap=330,
         ).pack(anchor="w", padx=18, pady=(0, 12))
 
@@ -116,6 +119,18 @@ class FloorsPage(ctk.CTkFrame):
             form, text="Bake kit with local Flux", height=36, fg_color=theme.ACCENT_DIM,
             hover_color="#24665c", command=self.bake,
         ).pack(fill="x", padx=18, pady=(6, 4))
+
+        theme.section(form, "Bring images here").pack(anchor="w", padx=18, pady=(14, 4))
+        theme.muted(form, "Use a structure, a scene, a generated sprite, or a file from this PC as a tile or backdrop.", wrap=330).pack(anchor="w", padx=18)
+        self.slot = ctk.CTkOptionMenu(form, values=list(SLOTS), fg_color=theme.CARD)
+        self.slot.set("floor")
+        self.slot.pack(fill="x", padx=18, pady=(6, 4))
+        brow = ctk.CTkFrame(form, fg_color="transparent")
+        brow.pack(fill="x", padx=18)
+        ctk.CTkButton(brow, text="Upload sprite…", height=30, fg_color=theme.ACCENT_DIM, command=self.upload).pack(side="left", expand=True, fill="x")
+        ctk.CTkButton(brow, text="Use last image", height=30, fg_color=theme.WARM, command=self.use_last).pack(side="left", padx=(6, 0), expand=True, fill="x")
+        self.kit_lbl = ctk.CTkLabel(form, text="No custom tiles yet.", text_color=theme.MUTED, wraplength=330, justify="left", anchor="w")
+        self.kit_lbl.pack(fill="x", padx=18, pady=(6, 0))
 
         theme.section(form, "Paint (R rotates)").pack(anchor="w", padx=18, pady=(14, 4))
         self.tool = ctk.CTkOptionMenu(
@@ -222,7 +237,65 @@ class FloorsPage(ctk.CTkFrame):
         self._hand_label()
 
     def on_show(self) -> None:
+        incoming = self.app.hold_path or self.app.last_image
+        if incoming and Path(incoming).exists():
+            name = Path(incoming).name
+            self.kit_lbl.configure(text=f"Ready: {name} — pick a slot and click Use last image.")
+        self._kit_summary()
         self.redraw()
+
+    def receive(self, path: Path, slot: str = "floor") -> None:
+        path = Path(path)
+        if not path.exists():
+            self.app.set_status("That file is missing.", "warn")
+            return
+        slot = slot if slot in SLOTS else "floor"
+        dest = unique_out(MAPS, f"tile_{slot}")
+        try:
+            shutil.copyfile(path, dest)
+        except OSError:
+            dest = path
+        if slot == "backdrop":
+            self.grid_map.backdrop = str(dest)
+        else:
+            self.grid_map.kit[slot] = str(dest)
+            if slot in KIND:
+                self._set_hand(slot)
+        self.slot.set(slot)
+        save_grid(self.grid_map)
+        self._kit_summary()
+        self.redraw()
+        self.app.set_status(f"{path.name} is now the {slot} on this floor plan.", "ok")
+
+    def upload(self) -> None:
+        picked = filedialog.askopenfilename(
+            title="Use your sprite on the floor plan",
+            filetypes=[("Images", "*.png;*.jpg;*.jpeg;*.webp;*.bmp")],
+        )
+        if not picked:
+            return
+        self.receive(Path(picked), self.slot.get())
+
+    def use_last(self) -> None:
+        src = self.app.hold_path or self.app.last_image or self.app.last_structure or self.app.last_scene
+        if not src or not Path(src).exists():
+            self.app.set_status("Nothing to use. Generate a structure/scene, or upload a file.", "warn")
+            return
+        slot = self.slot.get() or suggest_slot(getattr(self.app, "hold_kind", ""))
+        self.receive(Path(src), slot)
+
+    def _kit_summary(self) -> None:
+        bits = []
+        if getattr(self.grid_map, "backdrop", ""):
+            bits.append("backdrop ← " + Path(self.grid_map.backdrop).name)
+        for key, val in (self.grid_map.kit or {}).items():
+            if key == "backdrop":
+                continue
+            bits.append(f"{key} ← {Path(val).name}")
+        self.kit_lbl.configure(
+            text="  ·  ".join(bits[:8]) if bits else "No custom tiles yet. Upload or send from Structures / Scenes.",
+            text_color=theme.ACCENT if bits else theme.MUTED,
+        )
 
     def generate(self) -> None:
         if self.animating:

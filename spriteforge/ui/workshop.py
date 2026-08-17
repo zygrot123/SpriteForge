@@ -15,6 +15,7 @@ from ..engine.prompts import SCENES, STRUCTURES, STYLES, compile_negative, compi
 from ..engine.sampling import expand_script
 from ..paths import EXPORTS, OUTPUTS, ROOT, SHEETS, VIDEOS
 from . import theme
+from .bridge import add_bridge
 from .controls import GenPanel
 from .mic import attach_mic
 from .studio import BGS, SIZES, _style_key, _style_labels, _thumb, _view_labels
@@ -32,7 +33,7 @@ class StructuresPage(ctk.CTkFrame):
         form = ctk.CTkScrollableFrame(self, fg_color=theme.PANEL, width=380, corner_radius=0)
         form.grid(row=0, column=0, sticky="nsew")
         ctk.CTkLabel(form, text="Structures & tiles", text_color=theme.TEXT, font=ctk.CTkFont("Segoe UI", 22, "bold")).pack(anchor="w", padx=18, pady=(18, 4))
-        theme.muted(form, "Buildings, dungeon chunks, props, vegetation, doors, and seamless tiles — isolated so you can drop them in-engine. Open Floors to paint and auto-solve a whole dungeon from these pieces.").pack(anchor="w", padx=18, pady=(0, 12))
+        theme.muted(form, "Buildings, tiles, doors, props. After generate, send the piece to Floors so it becomes a tile on the map.").pack(anchor="w", padx=18, pady=(0, 12))
 
         kinds = [v["label"] for v in STRUCTURES.values()]
         theme.section(form, "Kind").pack(anchor="w", padx=18, pady=(8, 4))
@@ -70,6 +71,7 @@ class StructuresPage(ctk.CTkFrame):
         self.gen = GenPanel(form, self.app, default_w=1024, default_h=1024)
         self.gen.pack(fill="x", padx=18)
         ctk.CTkButton(form, text="Generate structure", height=42, fg_color=theme.WARM, hover_color="#d45544", command=self.generate).pack(fill="x", padx=18, pady=16)
+        add_bridge(form, self.app, lambda: self.last, default_kind="dungeon", pad=18)
 
         right = ctk.CTkFrame(self, fg_color=theme.BG)
         right.grid(row=0, column=1, sticky="nsew", padx=16, pady=16)
@@ -151,13 +153,16 @@ class StructuresPage(ctk.CTkFrame):
                 return
             path, meta = payload
             self.last = path
+            self.app.last_image = path
+            self.app.last_structure = path
+            self.app.hold(path, kind=kind, label=path.name)
             img = _thumb(path, (720, 720))
             if img:
                 self._img = img
                 self.preview.configure(image=img, text="")
             self.app.mind.note(f"struct_{kind}", text, style=self.style.get(), weight=1.0, path=str(path))
             self.app.refresh_memory_label()
-            self.app.set_status(f"Score {meta.get('total', 0):.0f}/100 · {path.name}", "ok")
+            self.app.set_status(f"Score {meta.get('total', 0):.0f}/100 · {path.name} — send to Floors when ready.", "ok")
 
         self.app.run_job(work, done, f"{MODES[qmode]['label']} — structure pipeline…")
 
@@ -174,7 +179,7 @@ class ScenesPage(ctk.CTkFrame):
         form = ctk.CTkScrollableFrame(self, fg_color=theme.PANEL, width=380, corner_radius=0)
         form.grid(row=0, column=0, sticky="nsew")
         ctk.CTkLabel(form, text="Scenes, skies, walls", text_color=theme.TEXT, font=ctk.CTkFont("Segoe UI", 22, "bold")).pack(anchor="w", padx=18, pady=(18, 4))
-        theme.muted(form, "Your description is sent as written. Style only tints the paint — it will not add a character. Isolated props punch out. Fill-frame skies and rooms stay full-bleed.").pack(anchor="w", padx=18, pady=(0, 12))
+        theme.muted(form, "Skies, walls, floors, water. Send a floor or wall here to Floors as a tile, or a sky as the map backdrop.").pack(anchor="w", padx=18, pady=(0, 12))
 
         kinds = [v["label"] for v in SCENES.values()]
         theme.section(form, "What to make").pack(anchor="w", padx=18, pady=(8, 4))
@@ -214,6 +219,7 @@ class ScenesPage(ctk.CTkFrame):
         self.compiled = ctk.CTkTextbox(form, height=80, fg_color=theme.CARD, text_color=theme.MUTED, font=ctk.CTkFont("Consolas", 11))
         self.compiled.pack(fill="x", padx=18)
         ctk.CTkButton(form, text="Generate scene", height=42, fg_color=theme.WARM, hover_color="#d45544", command=self.generate).pack(fill="x", padx=18, pady=16)
+        add_bridge(form, self.app, lambda: self.last, default_kind="floor", pad=18)
 
         right = ctk.CTkFrame(self, fg_color=theme.BG)
         right.grid(row=0, column=1, sticky="nsew", padx=16, pady=16)
@@ -344,13 +350,16 @@ class ScenesPage(ctk.CTkFrame):
                 return
             path, meta = payload
             self.last = path
+            self.app.last_image = path
+            self.app.last_scene = path
+            self.app.hold(path, kind=kind, label=path.name)
             img = _thumb(path, (900, 720))
             if img:
                 self._img = img
                 self.preview.configure(image=img, text="")
             self.app.mind.note(f"scene_{kind}", text, style=self.style.get(), weight=1.0, path=str(path))
             self.app.refresh_memory_label()
-            self.app.set_status(f"{spec['label']} · score {meta.get('total', 0):.0f}/100 · {path.name}", "ok")
+            self.app.set_status(f"{spec['label']} · {path.name} — send to Floors as a tile or backdrop.", "ok")
 
         self.app.run_job(work, done, f"Generating {spec['label'].lower()}…")
 
@@ -372,6 +381,7 @@ class SheetsPage(ctk.CTkFrame):
         form.grid(row=0, column=0, sticky="nsew")
         ctk.CTkLabel(form, text="Sprite sheets", text_color=theme.TEXT, font=ctk.CTkFont("Segoe UI", 22, "bold")).pack(anchor="w", padx=18, pady=(18, 8))
         ctk.CTkButton(form, text="Load sheet or image", fg_color=theme.CARD, command=self.load).pack(fill="x", padx=18, pady=6)
+        ctk.CTkButton(form, text="Use last generated image", fg_color=theme.ACCENT_DIM, command=self.use_last).pack(fill="x", padx=18, pady=6)
         theme.section(form, "Columns").pack(anchor="w", padx=18, pady=(12, 4))
         self.cols = ctk.CTkEntry(form)
         self.cols.insert(0, "8")
@@ -401,6 +411,15 @@ class SheetsPage(ctk.CTkFrame):
             return
         self.src = Path(path)
         self._show(self.src)
+
+    def use_last(self) -> None:
+        src = self.app.hold_path or self.app.last_image or self.app.last_sheet
+        if not src or not Path(src).exists():
+            self.app.set_status("Nothing generated yet. Make a sprite first.", "warn")
+            return
+        self.src = Path(src)
+        self._show(self.src)
+        self.app.set_status(f"Sheet source ← {self.src.name}", "ok")
 
     def _show(self, path: Path) -> None:
         img = _thumb(path, (900, 700))
@@ -668,7 +687,7 @@ class LibraryPage(ctk.CTkFrame):
         self.app = app
         self._thumbs: list[ctk.CTkImage] = []
         ctk.CTkLabel(self, text="Library", text_color=theme.TEXT, font=ctk.CTkFont("Segoe UI", 22, "bold")).pack(anchor="w", padx=18, pady=(18, 4))
-        theme.muted(self, "Recent outputs from Generate, Animations, and Structures.", wrap=800).pack(anchor="w", padx=18)
+        theme.muted(self, "Recent outputs. Hold one, send it to Floors or Imagine — every tab can use it.", wrap=800).pack(anchor="w", padx=18)
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(fill="x", padx=18, pady=10)
         ctk.CTkButton(row, text="Refresh", fg_color=theme.CARD, command=self.refresh).pack(side="left")
@@ -700,11 +719,15 @@ class LibraryPage(ctk.CTkFrame):
             btns = ctk.CTkFrame(cell, fg_color="transparent")
             btns.pack(fill="x", padx=8, pady=(4, 10))
             ctk.CTkButton(
-                btns, text="Open", width=70, height=26, fg_color=theme.CARD,
-                command=lambda p=path: os.startfile(p),
+                btns, text="Hold", width=48, height=26, fg_color=theme.CARD,
+                command=lambda p=path: self.app.hold(p, kind="image", label=p.name),
             ).pack(side="left")
             ctk.CTkButton(
-                btns, text="Delete", width=70, height=26, fg_color="#4a2430",
+                btns, text="Floors", width=56, height=26, fg_color=theme.WARM,
+                command=lambda p=path: self.app.send_to_floors(p, "floor"),
+            ).pack(side="left", padx=3)
+            ctk.CTkButton(
+                btns, text="Delete", width=56, height=26, fg_color="#4a2430",
                 hover_color="#6a3040", command=lambda p=path: self.delete_one(p),
             ).pack(side="right")
 

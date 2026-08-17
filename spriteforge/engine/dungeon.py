@@ -140,6 +140,7 @@ class Grid:
     seed: int = 0
     theme: str = ""
     kit: dict[str, str] = field(default_factory=dict)
+    backdrop: str = ""
 
     def __post_init__(self) -> None:
         if not self.cells:
@@ -155,12 +156,13 @@ class Grid:
             self.w, self.h,
             [[c.clone() for c in row] for row in self.cells],
             seed=self.seed, theme=self.theme, kit=dict(self.kit),
+            backdrop=self.backdrop,
         )
 
     def to_dict(self) -> dict:
         return {
             "w": self.w, "h": self.h, "seed": self.seed, "theme": self.theme,
-            "kit": self.kit,
+            "kit": self.kit, "backdrop": self.backdrop,
             "cells": [
                 [{"k": c.kind, "r": c.rot, "p": c.pin, "t": c.torch} for c in row]
                 for row in self.cells
@@ -170,7 +172,10 @@ class Grid:
     @classmethod
     def from_dict(cls, data: dict) -> "Grid":
         w, h = int(data["w"]), int(data["h"])
-        g = cls(w, h, seed=int(data.get("seed") or 0), theme=data.get("theme") or "", kit=data.get("kit") or {})
+        g = cls(
+            w, h, seed=int(data.get("seed") or 0), theme=data.get("theme") or "",
+            kit=data.get("kit") or {}, backdrop=str(data.get("backdrop") or ""),
+        )
         rows = data.get("cells") or []
         for y, row in enumerate(rows[:h]):
             for x, raw in enumerate(row[:w]):
@@ -412,9 +417,11 @@ def generate_map(
 ) -> Grid:
     seed = int(seed if seed is not None else random.randint(1, 2**31 - 1))
     kit = dict(pins.kit) if pins else {}
+    backdrop = pins.backdrop if pins else ""
     grid = pins.snapshot() if pins else new_grid(w, h, seed, theme)
     grid.w, grid.h = w, h
     grid.kit = kit
+    grid.backdrop = backdrop
     if len(grid.cells) != h or any(len(r) != w for r in grid.cells):
         fresh = new_grid(w, h, seed, theme)
         for y in range(min(h, len(grid.cells))):
@@ -503,6 +510,9 @@ def render_map(
 
     if not iso:
         img = Image.new("RGBA", (grid.w * cell + 2, grid.h * cell + 2), (12, 14, 20, 255))
+        back = _load_art(getattr(grid, "backdrop", "") or kit.get("backdrop"), img.size)
+        if back:
+            img.alpha_composite(back)
         for y in range(grid.h):
             for x in range(grid.w):
                 c = grid.cells[y][x]
@@ -518,6 +528,9 @@ def render_map(
     width = (grid.w + grid.h) * (tw // 2) + tw
     height = (grid.w + grid.h) * (th // 2) + th * 2
     img = Image.new("RGBA", (max(64, width), max(64, height)), (12, 14, 20, 255))
+    back = _load_art(getattr(grid, "backdrop", "") or kit.get("backdrop"), img.size)
+    if back:
+        img.alpha_composite(back)
     ox = (grid.h) * (tw // 2)
     oy = th
     order = sorted(((x, y) for y in range(grid.h) for x in range(grid.w)), key=lambda p: p[0] + p[1])
