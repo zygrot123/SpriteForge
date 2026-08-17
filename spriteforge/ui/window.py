@@ -11,6 +11,7 @@ from ..engine.assets import Library
 from ..engine.comfy import ComfyClient, ComfyError, start_comfy
 from ..paths import LOG_PATH, OUTPUTS, ensure_dirs
 from . import theme
+from .imagine import ImaginePage
 from .studio import AnimatePage, GeneratePage, ModelsPage
 from .workshop import ExportPage, LibraryPage, ScenesPage, SettingsPage, SheetsPage, StructuresPage
 
@@ -69,6 +70,7 @@ class SpriteForgeApp(ctk.CTk):
 
         items = [
             ("generate", "Generate"),
+            ("imagine", "Imagine"),
             ("models", "Lock model"),
             ("animate", "Animations"),
             ("structures", "Structures"),
@@ -108,6 +110,7 @@ class SpriteForgeApp(ctk.CTk):
         self.body.grid_rowconfigure(0, weight=1)
 
         self._pages["generate"] = GeneratePage(self.body, self)
+        self._pages["imagine"] = ImaginePage(self.body, self)
         self._pages["models"] = ModelsPage(self.body, self)
         self._pages["animate"] = AnimatePage(self.body, self)
         self._pages["structures"] = StructuresPage(self.body, self)

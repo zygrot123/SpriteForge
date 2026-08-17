@@ -243,8 +243,10 @@ class ComfyClient:
         prefix: str = "sprite_i2i",
         sampler_name: str = "euler",
         scheduler: str = "simple",
+        scale_width: int | None = None,
+        scale_height: int | None = None,
     ) -> dict:
-        return {
+        graph = {
             "1": {
                 "class_type": "UNETLoader",
                 "inputs": {"unet_name": "flux1-dev-fp8.safetensors", "weight_dtype": "fp8_e4m3fn"},
@@ -263,7 +265,22 @@ class ComfyClient:
                 "inputs": {"clip": ["2", 0], "clip_l": prompt, "t5xxl": prompt, "guidance": guidance},
             },
             "5": {"class_type": "LoadImage", "inputs": {"image": image_name}},
-            "6": {"class_type": "VAEEncode", "inputs": {"pixels": ["5", 0], "vae": ["3", 0]}},
+        }
+        pixels: list = ["5", 0]
+        if scale_width and scale_height:
+            graph["5b"] = {
+                "class_type": "ImageScale",
+                "inputs": {
+                    "image": ["5", 0],
+                    "upscale_method": "lanczos",
+                    "width": int(scale_width),
+                    "height": int(scale_height),
+                    "crop": "disabled",
+                },
+            }
+            pixels = ["5b", 0]
+        graph["6"] = {"class_type": "VAEEncode", "inputs": {"pixels": pixels, "vae": ["3", 0]}}
+        graph.update({
             "7": {
                 "class_type": "KSampler",
                 "inputs": {
@@ -281,7 +298,8 @@ class ComfyClient:
             },
             "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
             "9": {"class_type": "SaveImage", "inputs": {"images": ["8", 0], "filename_prefix": prefix}},
-        }
+        })
+        return graph
 
     def sdxl_txt2img(
         self,
@@ -348,6 +366,8 @@ class ComfyClient:
         hires_scale: float = 2.0,
         hires_denoise: float = 0.45,
         cfg: float | None = None,
+        scale_width: int | None = None,
+        scale_height: int | None = None,
     ) -> list[Path]:
         dest = dest_dir or OUTPUTS
         sdxl_cfg = float(cfg if cfg is not None else 6.0)
@@ -364,6 +384,7 @@ class ComfyClient:
                 prompt, name, seed=seed, steps=steps, denoise=denoise,
                 guidance=guidance, prefix=prefix,
                 sampler_name=sampler_name, scheduler=scheduler,
+                scale_width=scale_width, scale_height=scale_height,
             )
         else:
             graph = self.flux_txt2img(
