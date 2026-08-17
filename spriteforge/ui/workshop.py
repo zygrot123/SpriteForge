@@ -11,8 +11,10 @@ from ..engine.assets import compose_sheet, draw_grid_preview, process_sprite, sl
 from ..engine.quality import MODES, generate_quality, mode_key, mode_labels
 from ..engine.motion import PRESENTATIONS, presentation_by_label, presentation_labels
 from ..engine.prompts import SCENES, STRUCTURES, STYLES, compile_negative, compile_prompt
+from ..engine.sampling import expand_script
 from ..paths import EXPORTS, OUTPUTS, ROOT, SHEETS, VIDEOS
 from . import theme
+from .controls import GenPanel
 from .studio import BGS, SIZES, _style_key, _style_labels, _thumb, _view_labels
 
 
@@ -47,8 +49,8 @@ class StructuresPage(ctk.CTkFrame):
         self.view = ctk.CTkOptionMenu(form, values=_view_labels(), fg_color=theme.CARD)
         self.view.set("isometric")
         self.view.pack(fill="x", padx=18)
-        theme.section(form, "Size").pack(anchor="w", padx=18, pady=(10, 4))
-        self.size = ctk.CTkOptionMenu(form, values=list(SIZES.keys()), fg_color=theme.CARD)
+        theme.section(form, "Size preset").pack(anchor="w", padx=18, pady=(10, 4))
+        self.size = ctk.CTkOptionMenu(form, values=list(SIZES.keys()), fg_color=theme.CARD, command=self._on_size)
         self.size.set("1024 × 1024  hero")
         self.size.pack(fill="x", padx=18)
         theme.section(form, "Background").pack(anchor="w", padx=18, pady=(10, 4))
@@ -62,6 +64,8 @@ class StructuresPage(ctk.CTkFrame):
         self.key = ctk.CTkCheckBox(form, text="Punch out background")
         self.key.pack(anchor="w", padx=18, pady=10)
         self.key.select()
+        self.gen = GenPanel(form, self.app, default_w=1024, default_h=1024)
+        self.gen.pack(fill="x", padx=18)
         ctk.CTkButton(form, text="Generate structure", height=42, fg_color=theme.WARM, hover_color="#d45544", command=self.generate).pack(fill="x", padx=18, pady=16)
 
         right = ctk.CTkFrame(self, fg_color=theme.BG)
@@ -79,41 +83,62 @@ class StructuresPage(ctk.CTkFrame):
                 return k
         return "prop"
 
+    def _on_size(self, label: str) -> None:
+        if hasattr(self, "gen") and label in SIZES:
+            w, h = SIZES[label]
+            self.gen.set_size(w, h)
+
     def generate(self) -> None:
         text = self.prompt.get("1.0", "end").strip()
         if not text:
             self.app.set_status("Describe the structure.", "warn")
             return
         kind = self._kind_key()
-        w, h = SIZES[self.size.get()]
-        prompt = compile_prompt(
-            text, style=_style_key(self.style.get()), view=self.view.get(),
-            bg=self.bg.get(), kind="structure", structure_kind=kind,
-        )
-        seed = random.randint(1, 2**31 - 1)
+        gs = self.gen.collect()
         qmode = mode_key(self.quality.get())
         self.app.cfg["quality_mode"] = qmode
+        sampler_name, scheduler = gs.comfy_sampler()
+        extra = "seamless tileable, repeating edges" if gs.tiling or kind == "tile" else ""
 
         def work():
-            dest, meta = generate_quality(
-                self.app.client(),
-                prompt,
-                mode=qmode,
-                engine=self.app.cfg.get("engine", "flux"),
-                seed=seed,
-                steps=int(self.app.cfg.get("steps", 24)),
-                width=w,
-                height=h,
-                guidance=float(self.app.cfg.get("guidance", 3.5)),
-                bg=self.bg.get(),
-                kind="tile" if kind == "tile" else "structure",
-                key=bool(self.key.get()) and kind != "tile",
-                negative=compile_negative("tile" if kind == "tile" else "sprite"),
-                prefix=f"struct_{kind}_{seed}",
-                dest_dir=OUTPUTS,
-                name=kind,
-            )
-            self.app.lib.record_output(dest, {"kind": kind, "prompt": text, "seed": seed, "score": meta})
+            dest = None
+            meta = {}
+            idx = 0
+            for chunk in expand_script(text, gs.script):
+                prompt = compile_prompt(
+                    chunk, style=_style_key(self.style.get()), view=self.view.get(),
+                    bg=self.bg.get(), kind="structure", structure_kind=kind,
+                    literal=True, chroma=bool(self.key.get()) and kind != "tile", extra=extra,
+                )
+                for b in range(max(1, gs.batch_count)):
+                    seed = gs.seed + idx
+                    dest, meta = generate_quality(
+                        self.app.client(),
+                        prompt,
+                        mode=qmode,
+                        engine=self.app.cfg.get("engine", "flux"),
+                        seed=seed,
+                        steps=gs.steps,
+                        width=gs.width,
+                        height=gs.height,
+                        guidance=gs.cfg,
+                        bg=self.bg.get(),
+                        kind="tile" if kind == "tile" else "structure",
+                        key=bool(self.key.get()) and kind != "tile",
+                        negative=compile_negative("tile" if kind == "tile" else "sprite", extra=gs.negative),
+                        prefix=f"struct_{kind}_{seed}",
+                        dest_dir=OUTPUTS,
+                        name=kind,
+                        sampler_name=sampler_name,
+                        scheduler=scheduler,
+                        batch_size=gs.batch_size,
+                        hires_fix=gs.hires_fix,
+                        hires_scale=gs.hires_scale,
+                        hires_denoise=gs.hires_denoise,
+                        refiner=gs.refiner,
+                    )
+                    self.app.lib.record_output(dest, {"kind": kind, "prompt": chunk, "seed": seed, "score": meta})
+                    idx += 1
             return dest, meta
 
         def done(payload, err):
@@ -143,7 +168,7 @@ class ScenesPage(ctk.CTkFrame):
         form = ctk.CTkScrollableFrame(self, fg_color=theme.PANEL, width=380, corner_radius=0)
         form.grid(row=0, column=0, sticky="nsew")
         ctk.CTkLabel(form, text="Scenes, skies, walls", text_color=theme.TEXT, font=ctk.CTkFont("Segoe UI", 22, "bold")).pack(anchor="w", padx=18, pady=(18, 4))
-        theme.muted(form, "Skies, room plates, tileable walls and floors, water, clouds, and any world prop. Fill-frame kinds keep the picture. Isolated props punch out.").pack(anchor="w", padx=18, pady=(0, 12))
+        theme.muted(form, "Your description is sent as written. Style only tints the paint — it will not add a character. Isolated props punch out. Fill-frame skies and rooms stay full-bleed.").pack(anchor="w", padx=18, pady=(0, 12))
 
         kinds = [v["label"] for v in SCENES.values()]
         theme.section(form, "What to make").pack(anchor="w", padx=18, pady=(8, 4))
@@ -163,8 +188,8 @@ class ScenesPage(ctk.CTkFrame):
         theme.section(form, "View").pack(anchor="w", padx=18, pady=(10, 4))
         self.view = ctk.CTkOptionMenu(form, values=_view_labels(), fg_color=theme.CARD)
         self.view.pack(fill="x", padx=18)
-        theme.section(form, "Size").pack(anchor="w", padx=18, pady=(10, 4))
-        self.size = ctk.CTkOptionMenu(form, values=list(SIZES.keys()), fg_color=theme.CARD)
+        theme.section(form, "Size preset").pack(anchor="w", padx=18, pady=(10, 4))
+        self.size = ctk.CTkOptionMenu(form, values=list(SIZES.keys()), fg_color=theme.CARD, command=self._on_size)
         self.size.pack(fill="x", padx=18)
         theme.section(form, "Key color (props only)").pack(anchor="w", padx=18, pady=(10, 4))
         self.bg = ctk.CTkOptionMenu(form, values=BGS, fg_color=theme.CARD)
@@ -172,10 +197,15 @@ class ScenesPage(ctk.CTkFrame):
         self.bg.pack(fill="x", padx=18)
         theme.section(form, "Quality engine").pack(anchor="w", padx=18, pady=(10, 4))
         self.quality = ctk.CTkOptionMenu(form, values=mode_labels(), fg_color=theme.CARD)
-        self.quality.set(MODES.get(self.app.cfg.get("quality_mode", "quality"), MODES["quality"])["label"])
+        self.quality.set(MODES["fast"]["label"])
         self.quality.pack(fill="x", padx=18)
         self.key = ctk.CTkCheckBox(form, text="Punch out background")
         self.key.pack(anchor="w", padx=18, pady=10)
+        self.gen = GenPanel(form, self.app, default_w=1280, default_h=720)
+        self.gen.pack(fill="x", padx=18)
+        theme.section(form, "Prompt sent to the model").pack(anchor="w", padx=18, pady=(10, 4))
+        self.compiled = ctk.CTkTextbox(form, height=80, fg_color=theme.CARD, text_color=theme.MUTED, font=ctk.CTkFont("Consolas", 11))
+        self.compiled.pack(fill="x", padx=18)
         ctk.CTkButton(form, text="Generate scene", height=42, fg_color=theme.WARM, hover_color="#d45544", command=self.generate).pack(fill="x", padx=18, pady=16)
 
         right = ctk.CTkFrame(self, fg_color=theme.BG)
@@ -204,6 +234,9 @@ class ScenesPage(ctk.CTkFrame):
         size = spec.get("size")
         if size and size in SIZES:
             self.size.set(size)
+            if hasattr(self, "gen"):
+                w, h = SIZES[size]
+                self.gen.set_size(w, h)
         if pipe in {"plate", "tile"}:
             self.key.deselect()
         else:
@@ -214,6 +247,11 @@ class ScenesPage(ctk.CTkFrame):
             self.prompt.delete("1.0", "end")
             self.prompt.insert("1.0", spec.get("example", ""))
 
+    def _on_size(self, label: str) -> None:
+        if hasattr(self, "gen") and label in SIZES:
+            w, h = SIZES[label]
+            self.gen.set_size(w, h)
+
     def generate(self) -> None:
         text = self.prompt.get("1.0", "end").strip()
         if not text:
@@ -222,42 +260,74 @@ class ScenesPage(ctk.CTkFrame):
         kind = self._kind_key()
         spec = SCENES[kind]
         pipe = spec.get("pipeline", "prop")
-        w, h = SIZES[self.size.get()]
+        gs = self.gen.collect()
         bg = self.bg.get()
         key = bool(self.key.get()) and pipe == "prop"
-        prompt = compile_prompt(
+        qmode = mode_key(self.quality.get())
+        self.app.cfg["quality_mode"] = qmode
+        qkind = "plate" if pipe == "plate" else ("tile" if pipe == "tile" else "structure")
+        sampler_name, scheduler = gs.comfy_sampler()
+        extra = "seamless tileable, repeating edges" if gs.tiling or pipe == "tile" else ""
+        preview = compile_prompt(
             text,
             style=_style_key(self.style.get()),
             view=self.view.get(),
-            bg=bg if key else "green",
+            bg=bg,
             kind="scene",
             structure_kind=kind,
+            literal=True,
+            chroma=key,
+            extra=extra,
         )
-        seed = random.randint(1, 2**31 - 1)
-        qmode = mode_key(self.quality.get())
-        self.app.cfg["quality_mode"] = qmode
-        qkind = "tile" if pipe in {"tile", "plate"} else "structure"
+        self.compiled.delete("1.0", "end")
+        self.compiled.insert("1.0", preview)
+        neg_kind = "plate" if pipe == "plate" else ("tile" if pipe == "tile" else "sprite")
 
         def work():
-            dest, meta = generate_quality(
-                self.app.client(),
-                prompt,
-                mode=qmode,
-                engine=self.app.cfg.get("engine", "flux"),
-                seed=seed,
-                steps=int(self.app.cfg.get("steps", 24)),
-                width=w,
-                height=h,
-                guidance=float(self.app.cfg.get("guidance", 3.5)),
-                bg=bg,
-                kind=qkind,
-                key=key,
-                negative=compile_negative("tile" if pipe == "tile" else "sprite"),
-                prefix=f"scene_{kind}_{seed}",
-                dest_dir=OUTPUTS,
-                name=kind,
-            )
-            self.app.lib.record_output(dest, {"kind": f"scene_{kind}", "prompt": text, "seed": seed, "score": meta})
+            dest = None
+            meta = {}
+            idx = 0
+            for chunk in expand_script(text, gs.script):
+                prompt = compile_prompt(
+                    chunk,
+                    style=_style_key(self.style.get()),
+                    view=self.view.get(),
+                    bg=bg,
+                    kind="scene",
+                    structure_kind=kind,
+                    literal=True,
+                    chroma=key,
+                    extra=extra,
+                )
+                for _b in range(max(1, gs.batch_count)):
+                    seed = gs.seed + idx
+                    dest, meta = generate_quality(
+                        self.app.client(),
+                        prompt,
+                        mode=qmode,
+                        engine=self.app.cfg.get("engine", "flux"),
+                        seed=seed,
+                        steps=gs.steps,
+                        width=gs.width,
+                        height=gs.height,
+                        guidance=gs.cfg,
+                        bg=bg,
+                        kind=qkind,
+                        key=key,
+                        negative=compile_negative(neg_kind, extra=gs.negative),
+                        prefix=f"scene_{kind}_{seed}",
+                        dest_dir=OUTPUTS,
+                        name=kind,
+                        sampler_name=sampler_name,
+                        scheduler=scheduler,
+                        batch_size=gs.batch_size,
+                        hires_fix=gs.hires_fix,
+                        hires_scale=gs.hires_scale,
+                        hires_denoise=gs.hires_denoise,
+                        refiner=gs.refiner,
+                    )
+                    self.app.lib.record_output(dest, {"kind": f"scene_{kind}", "prompt": chunk, "seed": seed, "score": meta})
+                    idx += 1
             return dest, meta
 
         def done(payload, err):

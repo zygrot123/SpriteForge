@@ -38,6 +38,12 @@ STYLES = {
             "saturated dark-fantasy palette, gold bone and ember, crisp readable silhouette, "
             "not photorealistic, not a 3D render, not anime, not pixel art"
         ),
+        "env": (
+            "Supergiant Games Hades environment painting, painterly 2D backdrop, "
+            "visible brush strokes, high-contrast warm light against cool underworld shadow, "
+            "saturated dark-fantasy palette, gold bone and ember, environment only, "
+            "not photorealistic, not a 3D render, no character"
+        ),
     },
     "pixel_32": {
         "label": "Pixel 32-bit SNES",
@@ -45,6 +51,7 @@ STYLES = {
             "authentic 32-bit SNES pixel art sprite, limited 16-color cluster, "
             "chunky pixels, no anti-alias, hard outlines, retro game sprite sheet style"
         ),
+        "env": "authentic 32-bit SNES pixel art background, limited palette, chunky pixels, no anti-alias, no character",
     },
     "pixel_16": {
         "label": "Pixel 16-bit NES",
@@ -52,6 +59,7 @@ STYLES = {
             "authentic 16-bit pixel art sprite, very limited palette, chunky pixels, "
             "1px outline, no gradients, no anti-alias, classic NES/SNES sprite"
         ),
+        "env": "authentic 16-bit pixel art backdrop, limited palette, chunky pixels, no character",
     },
     "cel": {
         "label": "Cel-shaded 2D",
@@ -59,6 +67,7 @@ STYLES = {
             "clean 2D cel-shaded game character, bold ink outline, flat color fills, "
             "two-tone shadows, animated series look, production sprite"
         ),
+        "env": "clean 2D cel-shaded environment plate, bold ink, flat fills, two-tone shadows, no character",
     },
     "painterly": {
         "label": "Painterly RPG",
@@ -66,6 +75,7 @@ STYLES = {
             "hand-painted RPG game sprite, oil-paint texture, rich midtones, "
             "readable silhouette, Diablo-like production art, not photoreal"
         ),
+        "env": "hand-painted RPG environment plate, oil-paint texture, rich midtones, no character",
     },
     "realistic_dark": {
         "label": "Dark realistic fantasy",
@@ -73,6 +83,7 @@ STYLES = {
             "hyper-detailed dark fantasy game character, worn metal and cloth, "
             "cinematic rim light, grounded materials, still isolated as a sprite"
         ),
+        "env": "hyper-detailed dark fantasy environment, cinematic light, grounded materials, no character",
     },
     "anime": {
         "label": "Anime game",
@@ -80,6 +91,7 @@ STYLES = {
             "anime game sprite, clean line art, cel color, expressive but production-safe, "
             "full body character sheet style"
         ),
+        "env": "anime game background plate, clean line, cel color, no character",
     },
     "chibi": {
         "label": "Chibi / cute",
@@ -87,6 +99,7 @@ STYLES = {
             "chibi game sprite, oversized head, short limbs, cute proportions, "
             "clean cel color, toy-like readability"
         ),
+        "env": "cute chibi game backdrop, simple shapes, clean cel color, no character",
     },
     "lowpoly": {
         "label": "Low-poly 3D look",
@@ -94,7 +107,27 @@ STYLES = {
             "low-poly game character render, faceted geometry, simple materials, "
             "orthographic-friendly, isolated sprite"
         ),
+        "env": "low-poly game environment, faceted geometry, simple materials, no character",
     },
+}
+
+ENV_VIEWS = {
+    "side": "side-on environment view, orthographic, no character, no figure",
+    "front": "full-frame environment facing the described subject, no character, no person, no silhouette figure",
+    "back": "environment viewed from behind the implied camera, no character",
+    "three_quarter": "three-quarter environment view, no character",
+    "isometric": "Hades isometric environment camera, 2:1 projection, 30 degrees down, 45 degrees yaw, environment only, no character",
+    "iso_down": "same Hades isometric camera, looking toward the near-down corner, environment only",
+    "iso_up": "same Hades isometric camera, looking toward the far-up corner, environment only",
+    "iso_left": "same Hades isometric camera, looking left, environment only",
+    "iso_right": "same Hades isometric camera, looking right, environment only",
+    "iso_down_left": "same Hades isometric camera, down-left, environment only",
+    "iso_down_right": "same Hades isometric camera, down-right, environment only",
+    "iso_up_left": "same Hades isometric camera, up-left, environment only",
+    "iso_up_right": "same Hades isometric camera, up-right, environment only",
+    "top": "top-down environment or texture view, no character",
+    "bottom": "worm's-eye environment view, looking up, no character",
+    "side_25d": "2.5D side-scroller environment view, slight depth, no character",
 }
 
 VIEWS = {
@@ -287,6 +320,7 @@ STRUCTURES = {
     },
     "tile": {
         "label": "Seamless tile",
+        "pipeline": "tile",
         "lock": (
             "seamless tileable game texture, no unique landmark that would repeat as a stamp, "
             "edge colors match, non-directional lighting, top-down or orthographic as requested, "
@@ -338,9 +372,10 @@ SCENES = {
         "view": "front",
         "size": "1280 × 720  scene plate",
         "lock": (
-            "full-frame game sky backdrop, fills the entire image edge to edge, "
-            "no character, no building, no ground, no UI, no frame, no watermark, "
-            "paintable environment plate"
+            "full-frame game sky backdrop only, fills the entire image edge to edge, "
+            "empty sky, no character, no person, no silhouette, no warrior, no hero, "
+            "no building, no ground, no water, no mountains unless the words ask for them, "
+            "no UI, no frame, no watermark, paintable environment plate"
         ),
     },
     "backdrop": {
@@ -495,6 +530,10 @@ def _join(parts: Iterable[str]) -> str:
     return ", ".join(p.strip().rstrip(",") for p in parts if p and p.strip())
 
 
+def _style_pack(style: str) -> dict:
+    return STYLES.get(style, STYLES["abyssal_iso"])
+
+
 def compile_prompt(
     user_text: str,
     *,
@@ -508,9 +547,36 @@ def compile_prompt(
     structure_kind: str = "",
     intent: Intent | None = None,
     presentation: str = "",
+    literal: bool = False,
+    chroma: bool = True,
 ) -> str:
     user_text = (user_text or "").strip()
-    style_words = STYLES.get(style, STYLES["abyssal_iso"])["words"]
+    pack = _style_pack(style)
+    catalog = scene_catalog() if kind in {"structure", "scene"} else {}
+    spec = catalog.get(structure_kind or "prop", {}) if catalog else {}
+    pipe = spec.get("pipeline", "prop") if spec else "sprite"
+    plate = kind in {"structure", "scene"} and pipe in {"plate", "tile"}
+    follow = bool(literal or plate)
+
+    if follow:
+        style_words = pack.get("env") or pack["words"]
+        view_words = ENV_VIEWS.get(view, ENV_VIEWS["front"])
+        parts = [
+            f"Follow these words exactly and paint only what they say: {user_text}",
+        ]
+        if spec.get("lock"):
+            parts.append(spec["lock"])
+        if pose:
+            parts.append(pose)
+        parts.append(view_words)
+        parts.append(style_words)
+        if extra:
+            parts.append(extra)
+        if chroma and pipe == "prop":
+            parts.append(BG_HEX.get(bg, BG_HEX["green"])[1])
+        return _join(parts)
+
+    style_words = pack["words"]
     view_words = VIEWS.get(view, VIEWS["isometric"])
     bg_words = BG_HEX.get(bg, BG_HEX["green"])[1]
     brain = intent if intent is not None else (Intent(raw=user_text, rewritten=user_text) if identity else understand(user_text))
@@ -528,7 +594,6 @@ def compile_prompt(
     if pose:
         parts.append(pose)
     if kind in {"structure", "scene"}:
-        catalog = scene_catalog()
         sk = catalog.get(structure_kind or "prop", catalog["prop"])
         parts.append(sk["lock"])
     else:
@@ -537,21 +602,33 @@ def compile_prompt(
     parts.append(style_words)
     if presentation:
         parts.append(presentation)
-    parts.append(bg_words)
+    if chroma:
+        parts.append(bg_words)
     if extra:
         parts.append(extra)
     return _join(parts)
 
 
 def compile_negative(kind: str = "sprite", extra: str = "") -> str:
-    base = (
-        "photobash, collage, multiple characters, extra limbs, extra heads, "
-        "deformed hands, text, watermark, logo, frame, border, UI, HUD, "
-        "busy background, landscape, ground plane stretching, drop shadow blob, "
-        "blurry, lowres, cropped head, cropped feet, photograph of a toy"
-    )
-    if kind == "tile":
-        base += ", unique landmark, off-center motif, character, UI"
+    if kind in {"scene", "plate"}:
+        base = (
+            "character, person, people, human, hero, heroine, warrior, knight, soldier, "
+            "silhouette figure, standing figure, back view of a man, portrait, face, "
+            "body, NPC, player character, crowd, animal protagonist, "
+            "text, watermark, logo, frame, border, UI, HUD, letterbox"
+        )
+    elif kind == "tile":
+        base = (
+            "character, person, unique landmark, off-center motif, UI, text, watermark, "
+            "frame, border, photograph of a toy"
+        )
+    else:
+        base = (
+            "photobash, collage, multiple characters, extra limbs, extra heads, "
+            "deformed hands, text, watermark, logo, frame, border, UI, HUD, "
+            "busy background, landscape, ground plane stretching, drop shadow blob, "
+            "blurry, lowres, cropped head, cropped feet, photograph of a toy"
+        )
     if extra:
         base = extra + ", " + base
     return base

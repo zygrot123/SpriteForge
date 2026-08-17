@@ -145,8 +145,23 @@ class ComfyClient:
         height: int = 1024,
         guidance: float = 3.5,
         prefix: str = "sprite",
+        sampler_name: str = "euler",
+        scheduler: str = "simple",
+        batch_size: int = 1,
+        hires_fix: bool = False,
+        hires_scale: float = 2.0,
+        hires_denoise: float = 0.45,
     ) -> dict:
-        return {
+        from .sampling import snap16
+
+        width = snap16(width)
+        height = snap16(height)
+        batch_size = max(1, int(batch_size))
+        base_w, base_h = width, height
+        if hires_fix and hires_scale > 1.01:
+            base_w = snap16(int(width / float(hires_scale)))
+            base_h = snap16(int(height / float(hires_scale)))
+        graph = {
             "1": {
                 "class_type": "UNETLoader",
                 "inputs": {"unet_name": "flux1-dev-fp8.safetensors", "weight_dtype": "fp8_e4m3fn"},
@@ -166,7 +181,7 @@ class ComfyClient:
             },
             "5": {
                 "class_type": "EmptyLatentImage",
-                "inputs": {"width": int(width), "height": int(height), "batch_size": 1},
+                "inputs": {"width": int(base_w), "height": int(base_h), "batch_size": batch_size},
             },
             "6": {
                 "class_type": "KSampler",
@@ -175,17 +190,46 @@ class ComfyClient:
                     "seed": int(seed),
                     "steps": int(steps),
                     "cfg": 1.0,
-                    "sampler_name": "euler",
-                    "scheduler": "simple",
+                    "sampler_name": sampler_name,
+                    "scheduler": scheduler,
                     "denoise": 1.0,
                     "positive": ["4", 0],
                     "negative": ["4", 0],
                     "latent_image": ["5", 0],
                 },
             },
-            "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 0]}},
-            "9": {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": prefix}},
         }
+        decode_from = "6"
+        if hires_fix and hires_scale > 1.01:
+            graph["10"] = {
+                "class_type": "LatentUpscale",
+                "inputs": {
+                    "samples": ["6", 0],
+                    "upscale_method": "bislerp",
+                    "width": int(width),
+                    "height": int(height),
+                    "crop": "disabled",
+                },
+            }
+            graph["11"] = {
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": ["1", 0],
+                    "seed": int(seed) + 1,
+                    "steps": max(8, int(steps) // 2),
+                    "cfg": 1.0,
+                    "sampler_name": sampler_name,
+                    "scheduler": scheduler,
+                    "denoise": float(hires_denoise),
+                    "positive": ["4", 0],
+                    "negative": ["4", 0],
+                    "latent_image": ["10", 0],
+                },
+            }
+            decode_from = "11"
+        graph["7"] = {"class_type": "VAEDecode", "inputs": {"samples": [decode_from, 0], "vae": ["3", 0]}}
+        graph["9"] = {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": prefix}}
+        return graph
 
     def flux_img2img(
         self,
@@ -197,6 +241,8 @@ class ComfyClient:
         denoise: float = 0.42,
         guidance: float = 3.5,
         prefix: str = "sprite_i2i",
+        sampler_name: str = "euler",
+        scheduler: str = "simple",
     ) -> dict:
         return {
             "1": {
@@ -225,8 +271,8 @@ class ComfyClient:
                     "seed": int(seed),
                     "steps": int(steps),
                     "cfg": 1.0,
-                    "sampler_name": "euler",
-                    "scheduler": "simple",
+                    "sampler_name": sampler_name,
+                    "scheduler": scheduler,
                     "denoise": float(denoise),
                     "positive": ["4", 0],
                     "negative": ["4", 0],
@@ -248,6 +294,9 @@ class ComfyClient:
         height: int = 1024,
         cfg: float = 6.0,
         prefix: str = "sprite",
+        sampler_name: str = "dpmpp_2m",
+        scheduler: str = "karras",
+        batch_size: int = 1,
     ) -> dict:
         return {
             "0": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "sd_xl_base_1.0.safetensors"}},
@@ -255,7 +304,7 @@ class ComfyClient:
             "2": {"class_type": "CLIPTextEncode", "inputs": {"text": negative, "clip": ["0", 1]}},
             "3": {
                 "class_type": "EmptyLatentImage",
-                "inputs": {"width": int(width), "height": int(height), "batch_size": 1},
+                "inputs": {"width": int(width), "height": int(height), "batch_size": max(1, int(batch_size))},
             },
             "4": {"class_type": "VAELoader", "inputs": {"vae_name": "sdxl_vae.safetensors"}},
             "5": {
@@ -265,8 +314,8 @@ class ComfyClient:
                     "positive": ["1", 0],
                     "negative": ["2", 0],
                     "latent_image": ["3", 0],
-                    "sampler_name": "dpmpp_2m",
-                    "scheduler": "karras",
+                    "sampler_name": sampler_name,
+                    "scheduler": scheduler,
                     "seed": int(seed),
                     "steps": int(steps),
                     "cfg": float(cfg),
@@ -292,23 +341,37 @@ class ComfyClient:
         denoise: float = 0.42,
         prefix: str = "sprite",
         dest_dir: Path | None = None,
+        sampler_name: str = "euler",
+        scheduler: str = "simple",
+        batch_size: int = 1,
+        hires_fix: bool = False,
+        hires_scale: float = 2.0,
+        hires_denoise: float = 0.45,
+        cfg: float | None = None,
     ) -> list[Path]:
         dest = dest_dir or OUTPUTS
+        sdxl_cfg = float(cfg if cfg is not None else 6.0)
         if engine == "sdxl" and not ref_path:
             graph = self.sdxl_txt2img(
                 prompt, negative or "blurry, text, watermark",
                 seed=seed, steps=steps, width=width, height=height, prefix=prefix,
+                cfg=sdxl_cfg, sampler_name=sampler_name, scheduler=scheduler,
+                batch_size=batch_size,
             )
         elif ref_path:
             name = self.upload(Path(ref_path))
             graph = self.flux_img2img(
                 prompt, name, seed=seed, steps=steps, denoise=denoise,
                 guidance=guidance, prefix=prefix,
+                sampler_name=sampler_name, scheduler=scheduler,
             )
         else:
             graph = self.flux_txt2img(
                 prompt, seed=seed, steps=steps, width=width, height=height,
                 guidance=guidance, prefix=prefix,
+                sampler_name=sampler_name, scheduler=scheduler,
+                batch_size=batch_size, hires_fix=hires_fix,
+                hires_scale=hires_scale, hires_denoise=hires_denoise,
             )
         pid = self.queue_prompt(graph)
         job = self.wait(pid)

@@ -36,8 +36,10 @@ from ..engine.prompts import (
     compile_prompt,
     pixel_hint,
 )
+from ..engine.sampling import expand_script
 from ..paths import FRAMES, OUTPUTS, SHEETS
 from . import theme
+from .controls import GenPanel
 
 SIZES = {
     "512 × 512  icon / prop": (512, 512),
@@ -113,21 +115,16 @@ class GeneratePage(ctk.CTkFrame):
         self.style = self._combo(form, "Style", _style_labels(), STYLES[self.app.cfg["default_style"]]["label"])
         self.view = self._combo(form, "View / camera", _view_labels(), self.app.cfg.get("default_view", "isometric"))
         self._on_present(self.present.get())
-        self.size = self._combo(form, "Size", list(SIZES.keys()), "768 × 1024  character")
+        self.size = self._combo(form, "Size preset", list(SIZES.keys()), "768 × 1024  character")
+        self.size.configure(command=self._on_size)
         self.bg = self._combo(form, "Key background", BGS, self.app.cfg.get("default_bg", "green"))
         self.pixel = self._combo(form, "Pixelize after", PIXELS, "Off")
-        self.count = self._combo(form, "How many", ["1", "2", "3", "4"], "1")
         qdefault = MODES.get(self.app.cfg.get("quality_mode", "quality"), MODES["quality"])["label"]
         self.quality = self._combo(form, "Quality engine", mode_labels(), qdefault)
-
-        theme.section(form, "Seed").pack(anchor="w", padx=18, pady=(10, 4))
-        seed_row = ctk.CTkFrame(form, fg_color="transparent")
-        seed_row.pack(fill="x", padx=18, pady=(0, 8))
-        self.seed = ctk.CTkEntry(seed_row, placeholder_text="random")
-        self.seed.pack(side="left", fill="x", expand=True)
-        self.rand_seed = ctk.CTkCheckBox(seed_row, text="Random", width=90)
-        self.rand_seed.pack(side="left", padx=(8, 0))
-        self.rand_seed.select()
+        self.follow = ctk.CTkCheckBox(form, text="Follow my words exactly (skip brain rewrite)")
+        self.follow.pack(anchor="w", padx=18, pady=(10, 0))
+        self.gen = GenPanel(form, self.app, default_w=768, default_h=1024)
+        self.gen.pack(fill="x", padx=18)
 
         self.key_bg = ctk.CTkCheckBox(form, text="Punch out background (PNG alpha)")
         self.key_bg.pack(anchor="w", padx=18, pady=4)
@@ -184,26 +181,29 @@ class GeneratePage(ctk.CTkFrame):
         box.pack(fill="x", padx=18)
         return box
 
+    def _on_size(self, label: str) -> None:
+        if hasattr(self, "gen") and label in SIZES:
+            w, h = SIZES[label]
+            self.gen.set_size(w, h)
+
     def _opts(self) -> dict:
-        w, h = SIZES[self.size.get()]
         pix = None if self.pixel.get() == "Off" else int(self.pixel.get())
-        if self.rand_seed.get() or not self.seed.get().strip():
-            seed = random.randint(1, 2**31 - 1)
-        else:
-            seed = int(self.seed.get().strip())
+        gs = self.gen.collect()
         return {
             "text": self.prompt.get("1.0", "end").strip(),
             "style": _style_key(self.style.get()),
             "view": self.view.get(),
             "bg": self.bg.get(),
-            "width": w,
-            "height": h,
+            "width": gs.width,
+            "height": gs.height,
             "pixel": pix,
-            "seed": seed,
-            "count": int(self.count.get()),
+            "seed": gs.seed,
+            "count": gs.batch_count,
             "key": bool(self.key_bg.get()),
             "quality": mode_key(self.quality.get()),
             "present": self.present.get(),
+            "follow": bool(self.follow.get()),
+            "gs": gs,
         }
 
     def generate(self) -> None:
@@ -214,14 +214,19 @@ class GeneratePage(ctk.CTkFrame):
         extra = pixel_hint(o["pixel"])
         intent = understand(o["text"])
         _pk, pres = presentation_by_label(o["present"])
+        gs = o["gs"]
+        if gs.tiling:
+            extra = (extra + ", " if extra else "") + "seamless tileable"
         prompt = compile_prompt(
             o["text"], style=o["style"], view=o["view"], bg=o["bg"], extra=extra, intent=intent,
-            presentation=pres.get("lock", ""),
+            presentation="" if o["follow"] else pres.get("lock", ""),
+            literal=o["follow"],
+            chroma=o["key"],
         )
-        self.brain_lbl.configure(text=intent.summary)
+        self.brain_lbl.configure(text="exact words" if o["follow"] else intent.summary)
         self.compiled.delete("1.0", "end")
         shown = prompt
-        if intent.transformed:
+        if intent.transformed and not o["follow"]:
             shown = f"[BRAIN] {intent.summary}\n\n{prompt}"
         self.compiled.insert("1.0", shown)
         self.app.cfg["quality_mode"] = o["quality"]
@@ -237,36 +242,53 @@ class GeneratePage(ctk.CTkFrame):
             if per > 1 and qmode == "studio":
                 qmode = "quality"
             base_lock = lock_src
-            for i in range(per):
-                seed = o["seed"] + i * 101
-                dest, meta = generate_quality(
-                    client,
-                    prompt,
-                    mode=qmode if base_lock is None else "fast",
-                    engine=self.app.cfg.get("engine", "flux"),
-                    seed=seed,
-                    steps=int(self.app.cfg.get("steps", 24)),
-                    width=o["width"],
-                    height=o["height"],
-                    guidance=float(self.app.cfg.get("guidance", 3.5)),
-                    bg=o["bg"],
-                    kind="sprite",
-                    pixel_size=o["pixel"],
-                    key=o["key"],
-                    negative=compile_negative("sprite", extra=intent.negatives),
-                    prefix=f"gen_{seed}",
-                    dest_dir=OUTPUTS,
-                    name="sprite",
-                    ref_path=base_lock,
-                    lock_denoise=0.30,
+            sampler_name, scheduler = gs.comfy_sampler()
+            chunks = expand_script(o["text"], gs.script)
+            idx = 0
+            for chunk in chunks:
+                chunk_prompt = prompt if chunk == o["text"] else compile_prompt(
+                    chunk, style=o["style"], view=o["view"], bg=o["bg"], extra=extra, intent=understand(chunk),
+                    presentation="" if o["follow"] else pres.get("lock", ""),
+                    literal=o["follow"], chroma=o["key"],
                 )
-                paths.append(dest)
-                metas.append(meta)
-                if base_lock is None:
-                    lp = Path(meta["lock_path"]) if meta.get("lock_path") else dest
-                    if lp.exists():
-                        base_lock = lp
-                self.app.lib.record_output(dest, {"kind": "sprite", "seed": seed, "prompt": o["text"], "score": meta})
+                for i in range(per):
+                    seed = o["seed"] + idx * 101
+                    dest, meta = generate_quality(
+                        client,
+                        chunk_prompt,
+                        mode=qmode if base_lock is None else "fast",
+                        engine=self.app.cfg.get("engine", "flux"),
+                        seed=seed,
+                        steps=gs.steps,
+                        width=o["width"],
+                        height=o["height"],
+                        guidance=gs.cfg,
+                        bg=o["bg"],
+                        kind="sprite",
+                        pixel_size=o["pixel"],
+                        key=o["key"],
+                        negative=compile_negative("sprite", extra=(intent.negatives + ", " + gs.negative).strip(", ")),
+                        prefix=f"gen_{seed}",
+                        dest_dir=OUTPUTS,
+                        name="sprite",
+                        ref_path=base_lock,
+                        lock_denoise=0.30,
+                        sampler_name=sampler_name,
+                        scheduler=scheduler,
+                        batch_size=gs.batch_size,
+                        hires_fix=gs.hires_fix,
+                        hires_scale=gs.hires_scale,
+                        hires_denoise=gs.hires_denoise,
+                        refiner=gs.refiner,
+                    )
+                    idx += 1
+                    paths.append(dest)
+                    metas.append(meta)
+                    if base_lock is None:
+                        lp = Path(meta["lock_path"]) if meta.get("lock_path") else dest
+                        if lp.exists():
+                            base_lock = lp
+                    self.app.lib.record_output(dest, {"kind": "sprite", "seed": seed, "prompt": chunk, "score": meta})
             return {"paths": paths, "metas": metas, "lock": str(base_lock) if base_lock else ""}
 
         def done(payload, err):

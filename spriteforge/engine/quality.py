@@ -232,8 +232,16 @@ def _recenter(im: Image.Image, pad_ratio: float = 0.10) -> Image.Image:
     return out
 
 
-def enhance_prompt(prompt: str, mode: str) -> str:
-    if mode == "fast":
+ENV_KINDS = {"tile", "plate", "scene"}
+ENV_REFINE = (
+    "KEEP THIS EXACT SCENE. Cleanup only: sharper forms, cleaner color, "
+    "do not add a character, person, silhouette, hero, or extra objects. "
+    "Do not invent ground if the prompt said no ground."
+)
+
+
+def enhance_prompt(prompt: str, mode: str, kind: str = "sprite") -> str:
+    if mode == "fast" or kind in ENV_KINDS:
         return prompt
     return f"{prompt}, {QUALITY_EXTRA}"
 
@@ -259,19 +267,29 @@ def generate_quality(
     name: str = "sprite",
     ref_path: Path | str | None = None,
     lock_denoise: float = 0.30,
+    sampler_name: str = "euler",
+    scheduler: str = "simple",
+    batch_size: int = 1,
+    hires_fix: bool = False,
+    hires_scale: float = 2.0,
+    hires_denoise: float = 0.45,
+    refiner: bool = False,
 ) -> tuple[Path, dict]:
     spec = MODES.get(mode, MODES["quality"])
-    steps = int(steps) + int(spec["steps_boost"])
-    work_prompt = enhance_prompt(prompt, mode)
+    env = kind in ENV_KINDS
+    steps = int(steps) if env else int(steps) + int(spec["steps_boost"])
+    work_prompt = enhance_prompt(prompt, mode, kind)
     cands = spec["candidates"]
     ref = Path(ref_path) if ref_path else None
     if ref and not ref.exists():
         ref = None
-    if ref or kind == "tile":
+    if ref or env:
         cands = 1
-        spec = {**spec, "retry": False}
-        if ref:
+        spec = {**spec, "retry": False, "refine": bool(refiner) if env else spec["refine"]}
+        if ref and not env:
             work_prompt = f"{SAME_CHAR}, {work_prompt}"
+    elif refiner:
+        spec = {**spec, "refine": True}
 
     scored: list[tuple[float, Score, Path]] = []
     trash: list[Path] = []
@@ -289,6 +307,13 @@ def generate_quality(
             denoise=float(lock_denoise) if ref else 1.0,
             prefix=f"{prefix}_c{i}",
             dest_dir=dest_dir,
+            sampler_name=sampler_name,
+            scheduler=scheduler,
+            batch_size=batch_size,
+            hires_fix=hires_fix,
+            hires_scale=hires_scale,
+            hires_denoise=hires_denoise,
+            cfg=guidance,
         )
         path = raws[0]
         s = score_image(path, bg=bg, kind=kind)
@@ -312,6 +337,9 @@ def generate_quality(
             negative=negative,
             prefix=f"{prefix}_retry",
             dest_dir=dest_dir,
+            sampler_name=sampler_name,
+            scheduler=scheduler,
+            cfg=guidance,
         )
         s = score_image(raws[0], bg=bg, kind=kind)
         if s.total > best_total:
@@ -322,8 +350,9 @@ def generate_quality(
 
     refined = False
     if spec["refine"]:
+        refine_prompt = f"{ENV_REFINE}, {prompt}" if env else f"{REFINE_LOCK}, {prompt}"
         raws = client.generate(
-            f"{REFINE_LOCK}, {prompt}",
+            refine_prompt,
             engine="flux",
             seed=int(seed) + 17,
             steps=max(16, steps - 6),
@@ -334,6 +363,8 @@ def generate_quality(
             denoise=float(spec["denoise"]),
             prefix=f"{prefix}_ref",
             dest_dir=dest_dir,
+            sampler_name=sampler_name,
+            scheduler=scheduler,
         )
         s = score_image(raws[0], bg=bg, kind=kind)
         if s.total >= best_total - 4:
@@ -349,7 +380,8 @@ def generate_quality(
         shutil.copyfile(best_path, lock_path)
     except OSError:
         lock_path = best_path
-    finish_sprite(best_path, dest, bg=bg, pixel_size=pixel_size, key=key, kind=kind)
+    finish_kind = "tile" if env else kind
+    finish_sprite(best_path, dest, bg=bg, pixel_size=pixel_size, key=key and not env, kind=finish_kind)
     if best_path.resolve() != dest.resolve() and best_path.resolve() != Path(lock_path).resolve():
         trash.append(best_path)
     for p in trash:
