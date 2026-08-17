@@ -44,6 +44,20 @@ VARIANTS = (
     "bolder color and atmosphere, same subject and world",
 )
 
+EDIT_LOCK = (
+    "KEEP THIS PHOTO as the base. Apply ONLY the requested changes. "
+    "Add, remove, recolor, or restyle exactly as the words say. "
+    "Do not replace the subject or invent a new scene unless asked. "
+    "The result must still be recognizably this image."
+)
+
+STRENGTHS: dict[str, float] = {
+    "Tiny — keep almost everything": 0.22,
+    "Add / tweak — follow my words": 0.38,
+    "Restyle — new light and mood": 0.52,
+    "Transform — bigger change": 0.68,
+}
+
 UHD_LONG = 3840
 FLUX_PIXEL_CAP = 3840 * 2160
 
@@ -89,6 +103,23 @@ def _save_rgb(src: Path, dest: Path, size: tuple[int, int] | None = None) -> Pat
     return dest
 
 
+def fit_size(src: Path, max_long: int = 1280) -> tuple[int, int]:
+    im = Image.open(src)
+    w, h = im.size
+    scale = min(1.0, max_long / max(w, h, 1))
+    return snap16(max(64, int(w * scale))), snap16(max(64, int(h * scale)))
+
+
+def import_local(src: Path) -> Path:
+    """Copy a PC image into the library so the app can edit or animate it."""
+    ensure_dirs()
+    src = Path(src)
+    dest = unique_out(OUTPUTS, f"import_{src.stem}")
+    im = Image.open(src).convert("RGB")
+    im.save(dest, "PNG")
+    return dest
+
+
 def generate_variations(
     client,
     text: str,
@@ -102,10 +133,16 @@ def generate_variations(
     seed: int | None = None,
     count: int = 4,
     memory: str = "",
+    ref_path: Path | str | None = None,
+    denoise: float = 0.38,
 ) -> list[Path]:
     ensure_dirs()
     seed = seed if seed is not None else random.randint(1, 2**31 - 1)
-    base = think_prompt(text, style=style, think=think, memory=memory)
+    extra = EDIT_LOCK if ref_path else ""
+    base = think_prompt(text, style=style, think=think, memory=memory, extra=extra)
+    ref = Path(ref_path) if ref_path else None
+    if ref and ref.exists():
+        width, height = fit_size(ref)
     width, height = snap16(width), snap16(height)
     out: list[Path] = []
     for i, hint in enumerate(VARIANTS[: max(1, count)]):
@@ -119,6 +156,10 @@ def generate_variations(
             guidance=guidance,
             prefix=f"imagine_v{i + 1}",
             dest_dir=OUTPUTS,
+            ref_path=ref if ref and ref.exists() else None,
+            denoise=float(denoise),
+            scale_width=width if ref else None,
+            scale_height=height if ref else None,
         )
         dest = unique_out(OUTPUTS, f"imagine_v{i + 1}")
         _save_rgb(raws[0], dest)
@@ -231,14 +272,15 @@ def imagine_video(
         vh += 1
     folder = FRAMES / unique_out(FRAMES, "imagine_vid").stem
     folder.mkdir(parents=True, exist_ok=True)
+    desire = (motion or "").strip() or (text or "").strip() or "subtle living atmosphere, slow camera push-in"
     prompt = think_prompt(
-        text,
+        text or "this same image, now moving",
         style=style,
         think=think,
         extra=(
-            f"continuous cinematic shot, same scene and subject, "
-            f"motion: {(motion or 'subtle living atmosphere, slow camera push-in').strip()}, "
-            "no cut, no new hero, keep composition"
+            f"{EDIT_LOCK} "
+            f"continuous cinematic shot of THIS image. Follow this desire: {desire}. "
+            "Keep the same subject and layout. No cut, no new hero unless asked."
         ),
     )
     frames: list[Path] = []

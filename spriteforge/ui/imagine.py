@@ -11,11 +11,14 @@ from PIL import Image
 from ..engine.imagine import (
     ASPECTS,
     FREE_STYLES,
+    STRENGTHS,
     generate_variations,
     imagine_video,
+    import_local,
     think_prompt,
     upscale_4k,
 )
+from ..engine.assets import unique_out
 from ..paths import OUTPUTS, VIDEOS
 from . import theme
 from .mic import attach_mic
@@ -44,10 +47,34 @@ class ImaginePage(ctk.CTkFrame):
         ).pack(anchor="w", padx=18, pady=(18, 4))
         theme.muted(
             form,
-            "Talk like a person — type or use Mic. Everyday words and long sentences "
-            "get understood (mood, weather, camera, materials). Four variations, pick one, 4K or video.",
+            "Talk or type. Load a photo from this PC, then say what to add, change, or animate. "
+            "The edit and the video both follow your words on that picture.",
             wrap=330,
         ).pack(anchor="w", padx=18, pady=(0, 12))
+
+        theme.section(form, "Your image (from this PC)").pack(anchor="w", padx=18, pady=(8, 4))
+        load_row = ctk.CTkFrame(form, fg_color="transparent")
+        load_row.pack(fill="x", padx=18)
+        ctk.CTkButton(load_row, text="Load from PC", width=120, fg_color=theme.ACCENT_DIM, command=self.browse).pack(side="left")
+        ctk.CTkButton(load_row, text="Paste", width=70, fg_color=theme.CARD, command=self.paste_image).pack(side="left", padx=6)
+        ctk.CTkButton(load_row, text="Clear", width=70, fg_color=theme.CARD, command=self.clear_image).pack(side="left")
+        self.src_lbl = ctk.CTkLabel(form, text="No image loaded — text-only Imagine.", text_color=theme.MUTED, wraplength=330, justify="left", anchor="w")
+        self.src_lbl.pack(fill="x", padx=18, pady=(6, 0))
+        theme.section(form, "How hard to change the photo").pack(anchor="w", padx=18, pady=(10, 4))
+        self.strength = ctk.CTkOptionMenu(form, values=list(STRENGTHS), fg_color=theme.CARD)
+        self.strength.set("Add / tweak — follow my words")
+        self.strength.pack(fill="x", padx=18)
+        self.four_edits = ctk.CTkCheckBox(form, text="Make 4 edit variations")
+        self.four_edits.pack(anchor="w", padx=18, pady=(8, 0))
+        self.four_edits.select()
+        ctk.CTkButton(
+            form, text="Edit this image", height=36, fg_color=theme.WARM, hover_color="#d45544",
+            command=self.edit_image,
+        ).pack(fill="x", padx=18, pady=(10, 4))
+        ctk.CTkButton(
+            form, text="Video from this image", height=36, fg_color=theme.ACCENT_DIM,
+            hover_color="#24665c", command=self.image_video,
+        ).pack(fill="x", padx=18, pady=4)
 
         theme.section(form, "Idea").pack(anchor="w", padx=18, pady=(8, 4))
         self.prompt = ctk.CTkTextbox(form, height=130, font=ctk.CTkFont("Segoe UI", 14), fg_color=theme.CARD)
@@ -92,16 +119,11 @@ class ImaginePage(ctk.CTkFrame):
             hover_color="#24665c", command=self.upscale,
         ).pack(fill="x", padx=18, pady=4)
         ctk.CTkButton(
-            form, text="Image → video", height=36, fg_color=theme.CARD, command=self.image_video,
-        ).pack(fill="x", padx=18, pady=4)
-        ctk.CTkButton(
             form, text="Text → video", height=36, fg_color=theme.CARD, command=self.text_video,
         ).pack(fill="x", padx=18, pady=4)
-
-        brow = ctk.CTkFrame(form, fg_color="transparent")
-        brow.pack(fill="x", padx=18, pady=(10, 4))
-        ctk.CTkButton(brow, text="Browse still…", width=150, fg_color=theme.CARD, command=self.browse).pack(side="left")
-        ctk.CTkButton(brow, text="Open outputs", width=150, fg_color=theme.CARD, command=lambda: os.startfile(OUTPUTS)).pack(side="left", padx=8)
+        ctk.CTkButton(form, text="Open outputs", fg_color=theme.CARD, command=lambda: os.startfile(OUTPUTS)).pack(
+            fill="x", padx=18, pady=(10, 4)
+        )
 
         theme.section(form, "Prompt the model will get").pack(anchor="w", padx=18, pady=(12, 4))
         self.compiled = ctk.CTkTextbox(form, height=80, fg_color=theme.CARD, text_color=theme.MUTED, font=ctk.CTkFont("Consolas", 11))
@@ -127,7 +149,7 @@ class ImaginePage(ctk.CTkFrame):
             self.cells.append(cell)
             self.cell_lbls.append(lbl)
 
-        self.hero = ctk.CTkLabel(right, text="Pick a variation after Imagine ×4", text_color=theme.MUTED, fg_color=theme.CARD, corner_radius=12)
+        self.hero = ctk.CTkLabel(right, text="Load a photo or run Imagine ×4", text_color=theme.MUTED, fg_color=theme.CARD, corner_radius=12)
         self.hero.grid(row=1, column=0, sticky="nsew")
         self.pick_lbl = ctk.CTkLabel(right, text="Nothing selected", text_color=theme.MUTED, anchor="w")
         self.pick_lbl.grid(row=2, column=0, sticky="ew", pady=(10, 0))
@@ -145,6 +167,23 @@ class ImaginePage(ctk.CTkFrame):
         if not self.use_mem.get() or not self.app.cfg.get("use_memory", True):
             return ""
         return self.app.mind.steer()
+
+    def _denoise(self) -> float:
+        return float(STRENGTHS.get(self.strength.get(), 0.38))
+
+    def _show_src(self, path: Path, note: str = "") -> None:
+        self.still = path
+        self.picked = path
+        self.app.last_image = path
+        img = _thumb(path, (960, 540))
+        if img:
+            self._hero = img
+            self.hero.configure(image=img, text="")
+        label = f"Loaded  ·  {path.name}"
+        if note:
+            label = f"{note}  ·  {path.name}"
+        self.src_lbl.configure(text=f"Using {path.name} — edits and video follow your prompt on this picture.", text_color=theme.ACCENT)
+        self.pick_lbl.configure(text=label, text_color=theme.ACCENT)
 
     def _refresh_compiled(self) -> str:
         p = think_prompt(self._idea(), style=self.style.get(), think=self._think(), memory=self._memory())
@@ -175,10 +214,13 @@ class ImaginePage(ctk.CTkFrame):
 
         mem = self._memory()
 
+        src = self.still if self.still and Path(self.still).exists() else None
+
         def work():
             return generate_variations(
                 self.app.client(), text, style=style, think=think,
                 width=w, height=h, seed=seed, memory=mem,
+                ref_path=src, denoise=self._denoise() if src else 1.0,
             )
 
         def done(paths, err):
@@ -193,7 +235,8 @@ class ImaginePage(ctk.CTkFrame):
                 self.app.lib.record_output(p, {"kind": "imagine", "prompt": text, "seed": seed})
             self.app.mind.note("imagine", text, style=style, aspect=self.aspect.get(), weight=1.0)
             self.app.refresh_memory_label()
-            self.app.set_status(f"4 variations ready — click one, then 4K or video.", "ok")
+            kind = "photo edits" if src else "variations"
+            self.app.set_status(f"4 {kind} ready — click one, then 4K or video.", "ok")
 
         self.app.run_job(work, done, "Imagining 4 variations…")
 
@@ -273,10 +316,54 @@ class ImaginePage(ctk.CTkFrame):
 
         self.app.run_job(work, done, "Upscaling selected to 4K…")
 
-    def image_video(self) -> None:
-        src = self._selected()
+    def edit_image(self) -> None:
+        src = self.still if self.still and Path(self.still).exists() else self._selected()
         if not src:
-            self.app.set_status("Pick a variation or browse a still first.", "warn")
+            self.app.set_status("Load a photo from this PC first.", "warn")
+            return
+        text = self._idea()
+        if not text:
+            self.app.set_status("Write what to add or change on the photo.", "warn")
+            return
+        self._refresh_compiled()
+        style = self.style.get()
+        think = self._think()
+        mem = self._memory()
+        denoise = self._denoise()
+        count = 4 if self.four_edits.get() else 1
+        seed = random.randint(1, 2**31 - 1)
+
+        def work():
+            return generate_variations(
+                self.app.client(), text, style=style, think=think,
+                seed=seed, memory=mem, count=count,
+                ref_path=src, denoise=denoise,
+            )
+
+        def done(paths, err):
+            if err:
+                self.app.set_status(f"Edit failed: {err}", "err")
+                return
+            self.vars = list(paths or [])
+            self._render_grid()
+            if self.vars:
+                self.pick(0, remember=False)
+                self.still = self.vars[0]
+            for p in self.vars:
+                self.app.lib.record_output(p, {"kind": "imagine_edit", "prompt": text, "src": str(src)})
+            self.app.mind.note("edit", text, style=style, weight=2.5, path=str(self.vars[0] if self.vars else src))
+            self.app.refresh_memory_label()
+            self.app.set_status(f"Edited with your words · {len(self.vars)} result(s). Pick one or make video.", "ok")
+
+        self.app.run_job(work, done, "Editing your photo to follow the prompt…")
+
+    def image_video(self) -> None:
+        src = self.still if self.still and Path(self.still).exists() else self._selected()
+        if not src:
+            self.app.set_status("Load a photo from this PC (or pick a variation) first.", "warn")
+            return
+        if not self._idea() and not self._motion():
+            self.app.set_status("Write what the video should do — add, change, or how it should move.", "warn")
             return
         self._run_video(src)
 
@@ -340,18 +427,44 @@ class ImaginePage(ctk.CTkFrame):
             except OSError:
                 pass
 
-        self.app.run_job(work, done, "Animating selected image…")
+        self.app.run_job(work, done, "Animating your photo to follow the prompt…")
 
     def browse(self) -> None:
-        path = filedialog.askopenfilename(filetypes=[("Images", "*.png;*.jpg;*.jpeg;*.webp")])
+        path = filedialog.askopenfilename(
+            title="Choose an image on this PC",
+            filetypes=[("Images", "*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.tif;*.tiff")],
+        )
         if not path:
             return
-        self.still = Path(path)
-        self.picked = self.still
-        self.app.last_image = self.still
-        img = _thumb(self.still, (960, 540))
-        if img:
-            self._hero = img
-            self.hero.configure(image=img, text="")
-        self.pick_lbl.configure(text=f"Still  ·  {self.still.name}", text_color=theme.ACCENT)
-        self.app.set_status(f"Still: {self.still.name}", "ok")
+        dest = import_local(Path(path))
+        self._show_src(dest)
+        self.app.set_status(f"Loaded from PC: {Path(path).name}", "ok")
+
+    def paste_image(self) -> None:
+        try:
+            from PIL import ImageGrab
+
+            grabbed = ImageGrab.grabclipboard()
+        except Exception as exc:  # noqa: BLE001
+            self.app.set_status(f"Clipboard failed: {exc}", "err")
+            return
+        if grabbed is None:
+            self.app.set_status("Clipboard has no image. Copy a picture, then Paste.", "warn")
+            return
+        if isinstance(grabbed, list) and grabbed:
+            dest = import_local(Path(grabbed[0]))
+            self._show_src(dest, "Pasted file")
+            self.app.set_status(f"Pasted file: {dest.name}", "ok")
+            return
+        if not isinstance(grabbed, Image.Image):
+            self.app.set_status("Clipboard is not an image.", "warn")
+            return
+        dest = unique_out(OUTPUTS, "pasted")
+        grabbed.convert("RGB").save(dest, "PNG")
+        self._show_src(dest, "Pasted")
+        self.app.set_status(f"Pasted image → {dest.name}", "ok")
+
+    def clear_image(self) -> None:
+        self.still = None
+        self.src_lbl.configure(text="No image loaded — text-only Imagine.", text_color=theme.MUTED)
+        self.app.set_status("Cleared loaded photo.", "info")
