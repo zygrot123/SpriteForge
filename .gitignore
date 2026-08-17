@@ -1,0 +1,40 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# App secrets and local machine paths
+config.json
+.env
+.env.*
+
+# User library (generated art, locks, exports)
+library/outputs/
+library/frames/
+library/sheets/
+library/jobs/
+library/exports/
+library/videos/
+library/anims/
+library/models/
+
+# Downloaded engines / models (huge)
+runtime/
+downloads/
+
+# PyInstaller
+build/
+dist/
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/
+
+# Keep the unique app icon
+!tools/*.png
+!tools/*.ico
