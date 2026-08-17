@@ -1,21 +1,180 @@
 from __future__ import annotations
 
+import base64
 import json
+import os
 import shutil
+import socket
+import struct
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.error import URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from ..paths import COMFY_INPUT, OUTPUTS
+from .progress import NODE_PHASE
+
+ProgressCb = Callable[[dict], None]
 
 
 class ComfyError(RuntimeError):
     pass
+
+
+def _ws_send(sock: socket.socket, opcode: int, payload: bytes = b"") -> None:
+    mask = os.urandom(4)
+    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+    header = bytes([0x80 | opcode])
+    n = len(payload)
+    if n < 126:
+        header += bytes([0x80 | n])
+    elif n < 65536:
+        header += bytes([0x80 | 126]) + struct.pack("!H", n)
+    else:
+        header += bytes([0x80 | 127]) + struct.pack("!Q", n)
+    sock.sendall(header + mask + masked)
+
+
+def _recv_exact(sock: socket.socket, n: int) -> bytes | None:
+    buf = b""
+    while len(buf) < n:
+        try:
+            chunk = sock.recv(n - len(buf))
+        except TimeoutError:
+            return None
+        except OSError:
+            return None
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
+def _ws_read(sock: socket.socket) -> tuple[int, bytes] | None:
+    old = sock.gettimeout()
+    sock.settimeout(0.35)
+    head = _recv_exact(sock, 2)
+    if not head:
+        sock.settimeout(old)
+        return None
+    sock.settimeout(4.0)
+    try:
+        opcode = head[0] & 0x0F
+        masked = bool(head[1] & 0x80)
+        length = head[1] & 0x7F
+        if length == 126:
+            ext = _recv_exact(sock, 2)
+            if not ext:
+                return None
+            length = struct.unpack("!H", ext)[0]
+        elif length == 127:
+            ext = _recv_exact(sock, 8)
+            if not ext:
+                return None
+            length = struct.unpack("!Q", ext)[0]
+        mask = b""
+        if masked:
+            mask = _recv_exact(sock, 4) or b""
+            if len(mask) != 4:
+                return None
+        payload = _recv_exact(sock, int(length)) if length else b""
+        if payload is None:
+            return None
+        if mask:
+            payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        return opcode, payload
+    finally:
+        sock.settimeout(old)
+
+
+def _ws_connect(host: str, port: int, client_id: str, timeout: float = 4.0) -> socket.socket:
+    sock = socket.create_connection((host, port), timeout=timeout)
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    req = (
+        f"GET /ws?clientId={client_id} HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n"
+    )
+    sock.sendall(req.encode("ascii"))
+    buf = b""
+    sock.settimeout(timeout)
+    while b"\r\n\r\n" not in buf:
+        chunk = sock.recv(4096)
+        if not chunk:
+            sock.close()
+            raise OSError("websocket handshake closed")
+        buf += chunk
+    if b" 101 " not in buf.split(b"\r\n", 1)[0] and b"101" not in buf.split(b"\r\n", 1)[0]:
+        sock.close()
+        raise OSError("websocket handshake failed")
+    sock.settimeout(0.35)
+    return sock
+
+
+class _WsWatch:
+    def __init__(self, host: str, port: int, client_id: str, on_msg: Callable[[dict], None]) -> None:
+        self.host = host
+        self.port = port
+        self.client_id = client_id
+        self.on_msg = on_msg
+        self._stop = threading.Event()
+        self._sock: socket.socket | None = None
+        self.thread = threading.Thread(target=self._run, name="comfy-ws", daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        sock = self._sock
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    def _run(self) -> None:
+        try:
+            self._sock = _ws_connect(self.host, self.port, self.client_id)
+        except OSError:
+            return
+        sock = self._sock
+        while not self._stop.is_set():
+            try:
+                frame = _ws_read(sock)
+            except OSError:
+                break
+            if frame is None:
+                continue
+            opcode, payload = frame
+            if opcode == 0x8:
+                break
+            if opcode == 0x9:
+                try:
+                    _ws_send(sock, 0xA, payload)
+                except OSError:
+                    break
+                continue
+            if opcode != 0x1:
+                continue
+            try:
+                msg = json.loads(payload.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(msg, dict):
+                try:
+                    self.on_msg(msg)
+                except Exception:
+                    continue
 
 
 class ComfyClient:
@@ -23,6 +182,32 @@ class ComfyClient:
         self.base = base_url.rstrip("/")
         self.comfy_root = Path(comfy_root) if comfy_root else None
         self.client_id = f"spriteforge-{uuid.uuid4().hex[:8]}"
+        self.on_progress: ProgressCb | None = None
+        self.job_item = 0
+        self.job_items = 0
+        self._last_graph: dict = {}
+
+    def mark_item(self, item: int, items: int, phase: str = "") -> None:
+        self.job_item = int(item)
+        self.job_items = int(items)
+        self._emit({"phase": phase or f"{item} / {items}", "item": item, "items": items, "step": 0})
+
+    def _emit(self, ev: dict) -> None:
+        payload = {
+            "item": self.job_item,
+            "items": self.job_items,
+            **ev,
+        }
+        cb = self.on_progress
+        if cb:
+            try:
+                cb(payload)
+            except Exception:
+                pass
+
+    def _host_port(self) -> tuple[str, int]:
+        u = urlparse(self.base)
+        return u.hostname or "127.0.0.1", int(u.port or 8188)
 
     def _json(self, path: str, payload: dict | None = None, timeout: float = 60) -> Any:
         data = None
@@ -85,16 +270,70 @@ class ComfyClient:
             raise ComfyError(f"ComfyUI did not queue the job: {out}")
         return str(pid)
 
-    def wait(self, prompt_id: str, timeout: float = 1800, poll: float = 1.5) -> dict:
+    def wait(self, prompt_id: str, timeout: float = 1800, poll: float = 0.6, steps: int = 0) -> dict:
+        host, port = self._host_port()
+        watch: _WsWatch | None = None
+        expected = max(0, int(steps))
+
+        def on_ws(msg: dict) -> None:
+            kind = msg.get("type")
+            data = msg.get("data") or {}
+            if kind == "progress":
+                value = int(data.get("value") or 0)
+                mx = int(data.get("max") or expected or 0)
+                self._emit({
+                    "phase": "Sampling",
+                    "step": value,
+                    "steps": mx,
+                    "node": str(data.get("node") or "KSampler"),
+                })
+                return
+            if kind == "executing":
+                nid = data.get("node")
+                if nid is None:
+                    self._emit({"phase": "Saving image", "node": "SaveImage"})
+                    return
+                nid = str(nid)
+                cls = (self._last_graph or {}).get(nid, {}).get("class_type") or ""
+                phase = NODE_PHASE.get(cls, f"Working ({cls or nid})")
+                ev = {"phase": phase, "node": cls or nid}
+                if cls == "UNETLoader":
+                    ev["hint"] = (
+                        "FLUX.1-dev is loading into VRAM. First time after opening the app "
+                        "is the slow one (often 2–4 min). Later images skip this."
+                    )
+                self._emit(ev)
+                return
+            if kind == "status":
+                left = ((data.get("status") or {}).get("exec_info") or {}).get("queue_remaining")
+                try:
+                    left_n = int(left)
+                except (TypeError, ValueError):
+                    left_n = 0
+                if left_n > 1:
+                    self._emit({"phase": f"Queued — {left_n - 1} job(s) ahead"})
+
+        try:
+            watch = _WsWatch(host, port, self.client_id, on_ws)
+            watch.start()
+        except OSError:
+            watch = None
+
         t0 = time.time()
-        while time.time() - t0 < timeout:
-            hist = self._json(f"/history/{prompt_id}", timeout=30)
-            job = hist.get(prompt_id)
-            if job and job.get("outputs"):
-                return job
-            if job and job.get("status", {}).get("status_str") == "error":
-                raise ComfyError(f"ComfyUI job failed: {job.get('status')}")
-            time.sleep(poll)
+        try:
+            while time.time() - t0 < timeout:
+                hist = self._json(f"/history/{prompt_id}", timeout=30)
+                job = hist.get(prompt_id)
+                if job and job.get("outputs"):
+                    if expected:
+                        self._emit({"phase": "Saving image", "step": expected, "steps": expected})
+                    return job
+                if job and job.get("status", {}).get("status_str") == "error":
+                    raise ComfyError(f"ComfyUI job failed: {job.get('status')}")
+                time.sleep(poll)
+        finally:
+            if watch:
+                watch.close()
         raise ComfyError(f"Job {prompt_id} timed out after {int(timeout)}s")
 
     def download_outputs(self, job: dict, dest_dir: Path, prefix: str) -> list[Path]:
@@ -407,8 +646,24 @@ class ComfyClient:
                 batch_size=batch_size, hires_fix=hires_fix,
                 hires_scale=hires_scale, hires_denoise=hires_denoise,
             )
+        self._last_graph = graph
+        ks_steps = int(steps)
+        for node in graph.values():
+            if (node or {}).get("class_type") == "KSampler":
+                try:
+                    ks_steps = int((node.get("inputs") or {}).get("steps") or steps)
+                except (TypeError, ValueError):
+                    pass
+                break
+        self._emit({
+            "phase": "Queued on local Flux",
+            "step": 0,
+            "steps": ks_steps,
+            "item": self.job_item,
+            "items": self.job_items,
+        })
         pid = self.queue_prompt(graph)
-        job = self.wait(pid)
+        job = self.wait(pid, steps=ks_steps)
         return self.download_outputs(job, dest, prefix)
 
 

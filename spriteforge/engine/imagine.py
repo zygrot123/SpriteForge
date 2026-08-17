@@ -329,7 +329,10 @@ def generate_variations(
         steps = max(int(steps), 28)
     hints = EDIT_TRIES if ref else VARIANTS
     out: list[Path] = []
-    for i, hint in enumerate(hints[: max(1, count)]):
+    total = max(1, min(count, len(hints)))
+    for i, hint in enumerate(hints[:total]):
+        if hasattr(client, "mark_item"):
+            client.mark_item(i + 1, total, f"Generating {i + 1} / {total}")
         if ref:
             prompt = (
                 f"{base}. {hint}. "
@@ -501,7 +504,11 @@ def imagine_video(
     hero = folder / "hero.png"
     im.resize((vw, vh), Image.Resampling.LANCZOS).save(hero)
     frames: list[Path] = [hero]
+    if hasattr(client, "mark_item"):
+        client.mark_item(1, nframes, f"Hero still  1 / {nframes}")
     for i in range(1, nframes):
+        if hasattr(client, "mark_item"):
+            client.mark_item(i + 1, nframes, f"Video frame {i + 1} / {nframes}")
         t = i / max(nframes - 1, 1)
         prompt = think_prompt(
             text or "this same image, now moving",

@@ -315,7 +315,11 @@ class GeneratePage(ctk.CTkFrame):
             )
 
         label = "Keeping this character" if hold else MODES[o["quality"]]["label"]
-        self.app.run_job(work, done, f"{label} — {('same model' if hold else 'inventing then locking')}…")
+        chunks_n = max(1, len(expand_script(o["text"], gs.script)))
+        self.app.run_job(
+            work, done, f"{label} — {('same model' if hold else 'inventing then locking')}…",
+            items=chunks_n * max(1, int(o["count"])), steps=int(gs.steps),
+        )
 
     def forget_character(self) -> None:
         self.session_lock = None
@@ -773,6 +777,9 @@ class AnimatePage(ctk.CTkFrame):
                 last = self.app.lib.ref_path(card, ref_role) or base_ref
                 row = []
                 for i, pose in enumerate(poses):
+                    if hasattr(client, "mark_item"):
+                        idx = d_i * n + i + 1
+                        client.mark_item(idx, n * max(1, len(jobs)), f"{dname} frame {i + 1} / {n}")
                     extra = f"{pose}, {HEIGHT_LOCK}, {SOLO_LOCK}"
                     if facing:
                         extra = f"{extra}, {facing}"
@@ -834,6 +841,7 @@ class AnimatePage(ctk.CTkFrame):
         self.app.run_job(
             work, done,
             f"Animating {card.name} — {n} frames × {nd} direction(s), same face/height…",
+            items=max(1, n * nd),
         )
 
     def _fill_strip(self) -> None:

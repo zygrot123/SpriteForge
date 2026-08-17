@@ -10,6 +10,7 @@ from ..config import load_config, save_config
 from ..engine.assets import Library
 from ..engine.comfy import ComfyClient, ComfyError, start_comfy
 from ..engine.memory import MemoryStore
+from ..engine.progress import IDLE_HELP, JobClock, fmt_secs, record_sample
 from ..paths import LOG_PATH, OUTPUTS, ensure_dirs
 from . import theme
 from .chat import ChatPage
@@ -34,6 +35,11 @@ class SpriteForgeApp(ctk.CTk):
         self.last_video = None
         self._pages: dict[str, ctk.CTkFrame] = {}
         self._nav_btns: dict[str, ctk.CTkButton] = {}
+        self._clock: JobClock | None = None
+        self._pulse_id: str | None = None
+        self._help_win = None
+        self._status_title = "Ready. Describe a sprite and hit Generate."
+        self._status_kind = "info"
 
         self.title("SpriteForge  —  local sprite studio")
         self.geometry("1280x820")
@@ -53,7 +59,12 @@ class SpriteForgeApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def client(self) -> ComfyClient:
-        return ComfyClient(self.cfg["comfy_url"], self.cfg.get("comfy_root") or "")
+        c = ComfyClient(self.cfg["comfy_url"], self.cfg.get("comfy_root") or "")
+        c.on_progress = self.report_progress
+        if self._clock:
+            c.job_item = self._clock.item
+            c.job_items = self._clock.items
+        return c
 
     def _build_sidebar(self) -> None:
         side = ctk.CTkFrame(self, width=210, fg_color=theme.PANEL, corner_radius=0)
@@ -143,7 +154,7 @@ class SpriteForgeApp(ctk.CTk):
             page.grid(row=0, column=0, sticky="nsew")
 
     def _build_status(self) -> None:
-        bar = ctk.CTkFrame(self, height=36, fg_color=theme.PANEL, corner_radius=0)
+        bar = ctk.CTkFrame(self, height=42, fg_color=theme.PANEL, corner_radius=0)
         bar.grid(row=1, column=1, sticky="ew")
         self.status = ctk.CTkLabel(
             bar,
@@ -152,9 +163,28 @@ class SpriteForgeApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=12),
             anchor="w",
         )
-        self.status.pack(side="left", padx=16, pady=6, fill="x", expand=True)
-        self.spin = ctk.CTkProgressBar(bar, width=140, height=8, progress_color=theme.ACCENT)
-        self.spin.pack(side="right", padx=16)
+        self.status.pack(side="left", padx=(16, 8), pady=6, fill="x", expand=True)
+        self.eta_lbl = ctk.CTkLabel(
+            bar, text="", text_color=theme.WARN,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            width=110, anchor="e",
+        )
+        self.eta_lbl.pack(side="left", padx=(0, 6))
+        self.help_btn = ctk.CTkButton(
+            bar, text="?", width=28, height=26, fg_color=theme.CARD,
+            hover_color=theme.LINE, text_color=theme.TEXT,
+            font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
+            command=self._show_job_help,
+        )
+        self.help_btn.pack(side="left", padx=(0, 8))
+        self.pct_lbl = ctk.CTkLabel(
+            bar, text="", text_color=theme.ACCENT,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            width=44, anchor="e",
+        )
+        self.pct_lbl.pack(side="left", padx=(0, 8))
+        self.spin = ctk.CTkProgressBar(bar, width=180, height=10, progress_color=theme.ACCENT)
+        self.spin.pack(side="right", padx=(0, 16), pady=12)
         self.spin.set(0)
 
     def show(self, key: str) -> None:
@@ -174,16 +204,104 @@ class SpriteForgeApp(ctk.CTk):
 
     def set_status(self, text: str, kind: str = "info") -> None:
         colors = {"info": theme.MUTED, "ok": theme.OK, "warn": theme.WARN, "err": theme.WARM}
+        self._status_title = text
+        self._status_kind = kind
+        if self.busy and self._clock:
+            self._refresh_job_label()
+            return
         self.status.configure(text=text, text_color=colors.get(kind, theme.MUTED))
 
-    def run_job(self, work, on_done, start_msg: str = "Working…") -> None:
+    def report_progress(self, ev: dict | None = None, **kw) -> None:
+        payload = dict(ev or {})
+        payload.update(kw)
+        if threading.current_thread() is not threading.main_thread():
+            self.after(0, lambda p=payload: self._apply_progress(p))
+            return
+        self._apply_progress(payload)
+
+    def _apply_progress(self, ev: dict) -> None:
+        if not self.busy:
+            return
+        if self._clock is None:
+            self._clock = JobClock(self._status_title or "Working…")
+        self._clock.apply(ev)
+        self._refresh_job_label()
+
+    def _refresh_job_label(self) -> None:
+        clock = self._clock
+        if not clock:
+            return
+        self.status.configure(text=clock.line(), text_color=theme.TEXT)
+        eta = clock.eta()
+        if eta is None or (clock.elapsed() < 2 and clock.percent() < 4):
+            self.eta_lbl.configure(text="estimating…")
+        else:
+            self.eta_lbl.configure(text=f"{fmt_secs(eta)} left")
+        self.pct_lbl.configure(text=f"{clock.percent()}%")
+        self.spin.set(clock.frac())
+        if self._help_win is not None:
+            try:
+                if self._help_win.winfo_exists() and hasattr(self, "_help_box"):
+                    self._help_box.configure(state="normal")
+                    self._help_box.delete("1.0", "end")
+                    self._help_box.insert("1.0", clock.help_text())
+                    self._help_box.configure(state="disabled")
+            except Exception:
+                pass
+
+    def _pulse_job(self) -> None:
+        self._pulse_id = None
+        if not self.busy:
+            return
+        self._refresh_job_label()
+        self._pulse_id = self.after(400, self._pulse_job)
+
+    def _show_job_help(self) -> None:
+        if self._help_win is not None:
+            try:
+                if self._help_win.winfo_exists():
+                    self._help_win.destroy()
+                    self._help_win = None
+                    return
+            except Exception:
+                self._help_win = None
+        win = ctk.CTkToplevel(self)
+        win.title("What is Flux doing?")
+        win.geometry("480x360")
+        win.configure(fg_color=theme.PANEL)
+        win.attributes("-topmost", True)
+        body = self._clock.help_text() if self._clock else IDLE_HELP
+        box = ctk.CTkTextbox(win, fg_color=theme.CARD, text_color=theme.TEXT, wrap="word", font=ctk.CTkFont("Segoe UI", 13))
+        box.pack(fill="both", expand=True, padx=14, pady=14)
+        box.insert("1.0", body)
+        box.configure(state="disabled")
+        self._help_box = box
+        self._help_win = win
+
+        def _gone(_e=None) -> None:
+            self._help_win = None
+
+        win.protocol("WM_DELETE_WINDOW", lambda: (win.destroy(), _gone()))
+
+    def run_job(self, work, on_done, start_msg: str = "Working…", items: int = 0, steps: int = 0, hint: str = "") -> None:
         if self.busy:
             self.set_status("Already generating — wait for the current job.", "warn")
             return
         self.busy = True
-        self.set_status(start_msg, "info")
-        self.spin.configure(mode="indeterminate")
-        self.spin.start()
+        self._status_title = start_msg
+        self._status_kind = "info"
+        self._clock = JobClock(start_msg, items=items, steps=steps, hint=hint)
+        self.spin.configure(mode="determinate")
+        self.spin.set(0)
+        self.eta_lbl.configure(text="estimating…")
+        self.pct_lbl.configure(text="0%")
+        self.status.configure(text=self._clock.line(), text_color=theme.TEXT)
+        if self._pulse_id:
+            try:
+                self.after_cancel(self._pulse_id)
+            except Exception:
+                pass
+        self._pulse_id = self.after(400, self._pulse_job)
 
         def wrap() -> None:
             err = None
@@ -198,11 +316,26 @@ class SpriteForgeApp(ctk.CTk):
         threading.Thread(target=wrap, daemon=True).start()
 
     def _finish_job(self, on_done, result, err) -> None:
+        clock = self._clock
+        if clock and clock.elapsed() > 2:
+            each = clock.elapsed() / max(clock.items, 1)
+            record_sample("flux_image", each)
+            if not clock.warm:
+                record_sample("flux_first", clock.elapsed())
         self.busy = False
-        self.spin.stop()
-        self.spin.configure(mode="determinate")
-        self.spin.set(0)
+        self._clock = None
+        if self._pulse_id:
+            try:
+                self.after_cancel(self._pulse_id)
+            except Exception:
+                pass
+            self._pulse_id = None
+        self.spin.set(0 if err else 1)
+        self.eta_lbl.configure(text="")
+        self.pct_lbl.configure(text="" if err else "100%")
         on_done(result, err)
+        if not self.busy:
+            self.after(1600, lambda: self.pct_lbl.configure(text="") if not self.busy else None)
 
     def refresh_comfy(self) -> None:
         def check() -> dict:

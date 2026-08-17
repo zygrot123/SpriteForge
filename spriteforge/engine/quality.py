@@ -294,6 +294,8 @@ def generate_quality(
     scored: list[tuple[float, Score, Path]] = []
     trash: list[Path] = []
     for i in range(cands):
+        if hasattr(client, "mark_item"):
+            client.mark_item(i + 1, cands, f"Candidate {i + 1} / {cands}")
         raws = client.generate(
             work_prompt,
             engine=engine,

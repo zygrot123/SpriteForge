@@ -18,7 +18,7 @@ Double-click `launch.bat`.
 
 ## Download the EXE (Release)
 
-**[SpriteForge v1.0.7 — Windows zip](https://github.com/zygrot123/SpriteForge/releases/tag/v1.0.7)**
+**[SpriteForge v1.0.8 — Windows zip](https://github.com/zygrot123/SpriteForge/releases/tag/v1.0.8)**
 
 Unzip the whole folder, then run `SpriteForge.exe`. Keep `_internal` next to the exe.
 
@@ -33,7 +33,7 @@ GitHub Desktop → repo → **Releases** also lists this build.
 
 If this PC already has ComfyUI, the setup window offers **Use existing ComfyUI** and skips the download.
 
-First Flux job after a reboot can take a few minutes while the model loads into VRAM. After that, frames are much faster.
+First Flux job after a reboot can take a few minutes while the model loads into VRAM. After that, frames are much faster. The bottom bar shows exact image count (`2 / 4`), sampler step (`14 / 20`), percent, and time left. Click **?** for what the engine is doing right now.
 
 Open **Settings → Download / repair engine** to re-run the installer.
 

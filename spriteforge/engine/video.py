@@ -48,6 +48,8 @@ def animate_to_video(
             extra="neutral starting pose, still, ready to move",
             presentation=plen,
         )
+        if hasattr(client, "mark_item"):
+            client.mark_item(1, nframes + 1, f"Base still  1 / {nframes + 1}")
         raws = client.generate(
             still_prompt, seed=seed, steps=steps, width=width, height=height,
             guidance=guidance, prefix="vid_base", dest_dir=folder,
@@ -59,6 +61,9 @@ def animate_to_video(
     else:
         frames = []
     for i, pose in enumerate(poses):
+        if hasattr(client, "mark_item"):
+            off = 1 if ref_path is None else 0
+            client.mark_item(i + 1 + off, nframes + off, f"Video frame {i + 1} / {nframes}")
         prompt = compile_prompt(
             prompt_text, style=style, view=view, bg=bg, identity=identity,
             pose=f"{SAME_CHAR}, {HEIGHT_LOCK}, {vlock}, animation frame {i+1} of {nframes}: {pose}",

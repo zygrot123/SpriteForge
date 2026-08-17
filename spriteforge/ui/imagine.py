@@ -21,6 +21,7 @@ from ..engine.imagine import (
     scale_video,
     think_prompt,
     upscale_image,
+    video_frame_plan,
 )
 from ..engine.assets import unique_out
 from ..paths import OUTPUTS, VIDEOS
@@ -268,7 +269,10 @@ class ImaginePage(ctk.CTkFrame):
             kind = "photo edits" if src else "variations"
             self.app.set_status(f"4 {kind} ready — click one, then 4K or video.", "ok")
 
-        self.app.run_job(work, done, "Imagining 4 variations…")
+        self.app.run_job(
+            work, done, "Imagining 4 variations…",
+            items=4, steps=int(self.app.cfg.get("steps") or 20),
+        )
 
     def _render_grid(self) -> None:
         self._thumbs.clear()
@@ -346,7 +350,10 @@ class ImaginePage(ctk.CTkFrame):
             self.pick_lbl.configure(text=f"{preset} ready  ·  {w}×{h}  ·  {path.name}", text_color=theme.OK)
             self.app.set_status(f"{preset} → {path.name} ({w}×{h})", "ok")
 
-        self.app.run_job(work, done, f"Upscaling image to {preset}…")
+        self.app.run_job(
+            work, done, f"Upscaling image to {preset}…",
+            items=1, steps=int(self.app.cfg.get("steps") or 18),
+        )
 
     def edit_image(self) -> None:
         src = self.still if self.still and Path(self.still).exists() else self._selected()
@@ -389,7 +396,10 @@ class ImaginePage(ctk.CTkFrame):
             self.app.refresh_memory_label()
             self.app.set_status(f"Edited with your words · {len(self.vars)} result(s). Pick one or make video.", "ok")
 
-        self.app.run_job(work, done, "Editing your photo to follow the prompt…")
+        self.app.run_job(
+            work, done, "Editing your photo to follow the prompt…",
+            items=count, steps=max(28, int(self.app.cfg.get("steps") or 20)),
+        )
 
     def image_video(self) -> None:
         src = self.still if self.still and Path(self.still).exists() else self._selected()
@@ -446,7 +456,12 @@ class ImaginePage(ctk.CTkFrame):
             self.app.set_status(f"Text → video ({int(seconds)}s, same hero) → {path.name}", "ok")
             os.startfile(path)
 
-        self.app.run_job(work, done, f"Text → video, {int(seconds)} seconds, locking the same face…")
+        nframes, _fps = video_frame_plan(seconds)
+        extra = 0 if src else 1
+        self.app.run_job(
+            work, done, f"Text → video, {int(seconds)} seconds, locking the same face…",
+            items=nframes + extra, steps=int(self.app.cfg.get("steps") or 16),
+        )
 
     def _run_video(self, src: Path) -> None:
         text = self._idea()
@@ -477,7 +492,11 @@ class ImaginePage(ctk.CTkFrame):
             except OSError:
                 pass
 
-        self.app.run_job(work, done, f"Animating {int(seconds)}s at {self.outres.get()}, same face…")
+        nframes, _fps = video_frame_plan(seconds)
+        self.app.run_job(
+            work, done, f"Animating {int(seconds)}s at {self.outres.get()}, same face…",
+            items=nframes, steps=int(self.app.cfg.get("steps") or 16),
+        )
 
     def upscale_video(self) -> None:
         src = getattr(self.app, "last_video", None)
@@ -503,7 +522,7 @@ class ImaginePage(ctk.CTkFrame):
             self.app.set_status(f"Video {preset} → {path.name}", "ok")
             os.startfile(path)
 
-        self.app.run_job(work, done, f"Scaling video to {preset}…")
+        self.app.run_job(work, done, f"Scaling video to {preset}…", items=1)
 
     def browse(self) -> None:
         path = filedialog.askopenfilename(
