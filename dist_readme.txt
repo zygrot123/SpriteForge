@@ -1,18 +1,17 @@
-SPRITEFORGE — copy this whole folder to another Windows PC
+SPRITEFORGE — extract the WHOLE zip
 
-1. Copy the entire SpriteForge folder (SpriteForge.exe + _internal).
-   Do not copy only the .exe — it will not start without _internal.
+You must see BOTH of these in the same folder:
+   SpriteForge.exe
+   _internal          (folder)
 
-2. Double-click SpriteForge.exe.
+If you only see the .exe, you ran it from inside the zip or copied just the exe.
+That will crash.
 
-3. First launch on a new PC downloads the AI engine:
-      ComfyUI portable   ~2 GB
-      FLUX.1-dev fp8     ~16 GB
-      text encoders      ~5 GB
-   Total about 23 GB. Needs an NVIDIA GPU and a stable internet connection.
-   If the download stops, start SpriteForge again — it continues where it left off.
+1. Right-click SpriteForge-Windows.zip → Extract All…
+2. Open the extracted SpriteForge folder
+3. Double-click SpriteForge.exe  (or Start SpriteForge.bat)
 
-4. After install, generation is local and free. Nothing is uploaded.
+First launch may download FLUX + ffmpeg (~23 GB, NVIDIA GPU).
+After that it runs offline.
 
-Your sprites are saved under:
-   %LOCALAPPDATA%\SpriteForge\library
+Sprites:  %LOCALAPPDATA%\SpriteForge\library
