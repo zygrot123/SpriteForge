@@ -57,6 +57,10 @@ def think_prompt(
     memory: str = "",
 ) -> str:
     idea = (text or "").strip()
+    if think:
+        from .brain import understand
+
+        idea = understand(idea, fluid=True).visual()
     parts = [f"The idea to paint: {idea}"]
     if think:
         parts.append(THINK)

@@ -40,6 +40,7 @@ from ..engine.sampling import expand_script
 from ..paths import FRAMES, OUTPUTS, SHEETS
 from . import theme
 from .controls import GenPanel
+from .mic import attach_mic
 
 SIZES = {
     "512 × 512  icon / prop": (512, 512),
@@ -107,8 +108,9 @@ class GeneratePage(ctk.CTkFrame):
 
         theme.section(form, "Describe").pack(anchor="w", padx=18, pady=(8, 4))
         self.prompt = ctk.CTkTextbox(form, height=110, font=ctk.CTkFont("Segoe UI", 14), fg_color=theme.CARD)
-        self.prompt.pack(fill="x", padx=18, pady=(0, 10))
+        self.prompt.pack(fill="x", padx=18, pady=(0, 4))
         self.prompt.insert("1.0", "lone abyss knight, blackened plate, torn red cape, single cyan visor slit")
+        attach_mic(form, self.prompt, self.app)
 
         self.present = self._combo(form, "Game camera", presentation_labels(), PRESENTATIONS["hades"]["label"])
         self.present.configure(command=self._on_present)

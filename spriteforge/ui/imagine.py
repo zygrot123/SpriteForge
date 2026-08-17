@@ -18,6 +18,7 @@ from ..engine.imagine import (
 )
 from ..paths import OUTPUTS, VIDEOS
 from . import theme
+from .mic import attach_mic
 from .studio import _thumb
 
 
@@ -43,8 +44,8 @@ class ImaginePage(ctk.CTkFrame):
         ).pack(anchor="w", padx=18, pady=(18, 4))
         theme.muted(
             form,
-            "Free text-to-image and image-to-video. Writes four variations like Midjourney. "
-            "Pick one, then upscale it to 4K or turn it into a video.",
+            "Talk like a person — type or use Mic. Everyday words and long sentences "
+            "get understood (mood, weather, camera, materials). Four variations, pick one, 4K or video.",
             wrap=330,
         ).pack(anchor="w", padx=18, pady=(0, 12))
 
@@ -52,6 +53,7 @@ class ImaginePage(ctk.CTkFrame):
         self.prompt = ctk.CTkTextbox(form, height=130, font=ctk.CTkFont("Segoe UI", 14), fg_color=theme.CARD)
         self.prompt.pack(fill="x", padx=18)
         self.prompt.insert("1.0", "a lonely lantern adrift on a black sea under two pale moons")
+        attach_mic(form, self.prompt, self.app)
 
         theme.section(form, "Thinking").pack(anchor="w", padx=18, pady=(10, 4))
         self.think = ctk.CTkOptionMenu(
@@ -75,6 +77,7 @@ class ImaginePage(ctk.CTkFrame):
         self.motion = ctk.CTkTextbox(form, height=64, fg_color=theme.CARD)
         self.motion.pack(fill="x", padx=18)
         self.motion.insert("1.0", "slow camera push-in, light breathing, clouds and water living")
+        attach_mic(form, self.motion, self.app)
         self.use_mem = ctk.CTkCheckBox(form, text="Use evolving memory (profile taste)")
         self.use_mem.pack(anchor="w", padx=18, pady=(10, 0))
         if self.app.cfg.get("use_memory", True):

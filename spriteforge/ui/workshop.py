@@ -10,11 +10,13 @@ from ..config import save_config
 from ..engine.assets import compose_sheet, draw_grid_preview, process_sprite, slice_sheet, unique_out
 from ..engine.quality import MODES, generate_quality, mode_key, mode_labels
 from ..engine.motion import PRESENTATIONS, presentation_by_label, presentation_labels
+from ..engine.lexicon import fluidize
 from ..engine.prompts import SCENES, STRUCTURES, STYLES, compile_negative, compile_prompt
 from ..engine.sampling import expand_script
 from ..paths import EXPORTS, OUTPUTS, ROOT, SHEETS, VIDEOS
 from . import theme
 from .controls import GenPanel
+from .mic import attach_mic
 from .studio import BGS, SIZES, _style_key, _style_labels, _thumb, _view_labels
 
 
@@ -40,6 +42,7 @@ class StructuresPage(ctk.CTkFrame):
         self.prompt = ctk.CTkTextbox(form, height=110, fg_color=theme.CARD)
         self.prompt.pack(fill="x", padx=18)
         self.prompt.insert("1.0", "ruined abyss shrine gate, cracked black stone, cyan rune cracks, hanging chains")
+        attach_mic(form, self.prompt, self.app)
 
         theme.section(form, "Style").pack(anchor="w", padx=18, pady=(10, 4))
         self.style = ctk.CTkOptionMenu(form, values=_style_labels(), fg_color=theme.CARD)
@@ -94,6 +97,7 @@ class StructuresPage(ctk.CTkFrame):
             self.app.set_status("Describe the structure.", "warn")
             return
         kind = self._kind_key()
+        text, _notes = fluidize(text, expand=True)
         gs = self.gen.collect()
         qmode = mode_key(self.quality.get())
         self.app.cfg["quality_mode"] = qmode
@@ -182,6 +186,7 @@ class ScenesPage(ctk.CTkFrame):
         theme.section(form, "Describe").pack(anchor="w", padx=18, pady=(10, 4))
         self.prompt = ctk.CTkTextbox(form, height=110, fg_color=theme.CARD)
         self.prompt.pack(fill="x", padx=18)
+        attach_mic(form, self.prompt, self.app)
 
         theme.section(form, "Style").pack(anchor="w", padx=18, pady=(10, 4))
         self.style = ctk.CTkOptionMenu(form, values=_style_labels(), fg_color=theme.CARD)
@@ -262,6 +267,7 @@ class ScenesPage(ctk.CTkFrame):
         kind = self._kind_key()
         spec = SCENES[kind]
         pipe = spec.get("pipeline", "prop")
+        text, _notes = fluidize(text, expand=True)
         gs = self.gen.collect()
         bg = self.bg.get()
         key = bool(self.key.get()) and pipe == "prop"

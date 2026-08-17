@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from .lexicon import fluidize
+
 # Visual recipes the model actually paints. The raw word "fish" is too weak
 # next to a celebrity token like "Pikachu", so we spell the new BODY first.
 FORMS: dict[str, dict[str, str]] = {
@@ -126,6 +128,35 @@ FORMS: dict[str, dict[str, str]] = {
         "body": "full plate armor over the character, visor, gauntlets, cape",
         "forbid": "naked mascot with no armor",
     },
+    "lion": {"body": "lion body, mane, paws, tail, feline muzzle", "forbid": "human hands as the default"},
+    "tiger": {"body": "tiger body, stripes, paws, long tail", "forbid": "plain house-cat only"},
+    "fox": {"body": "fox body, bushy tail, pointed muzzle, digitigrade", "forbid": "round mouse face only"},
+    "bear": {"body": "bear body, heavy shoulders, short tail, claws", "forbid": "tiny rodent body"},
+    "horse": {"body": "horse body, hooves, mane, long face", "forbid": "bipedal human legs as default"},
+    "unicorn": {"body": "unicorn, horse body, spiral horn, luminous mane", "forbid": "hornless ordinary horse only"},
+    "owl": {"body": "owl body, huge forward eyes, wings, talons", "forbid": "no wings, human arms"},
+    "crow": {"body": "crow body, black feathers, wings, beak", "forbid": "no wings"},
+    "rabbit": {"body": "rabbit body, long ears, powerful hind legs", "forbid": "human legs as default"},
+    "rat": {"body": "rat body, long tail, incisors, pink paws", "forbid": "cute mouse mascot only if not asked"},
+    "lizard": {"body": "lizard body, scales, tail, digitigrade", "forbid": "mammal fur as default"},
+    "turtle": {"body": "turtle body, shell, beak, short limbs", "forbid": "no shell"},
+    "crab": {"body": "crab body, carapace, claws, side-ways stance", "forbid": "mammal body"},
+    "moth": {"body": "moth body, dusty wings, antennae, insect legs", "forbid": "mammal body"},
+    "vampire": {"body": "vampire, pale skin, formal dark cloth, fangs optional", "forbid": "sunlit healthy mascot"},
+    "witch": {"body": "witch, ritual cloth, charms, practical magic tools", "forbid": "ordinary street clothes only"},
+    "wizard": {"body": "wizard, robe, focus item, aged or ageless face", "forbid": "sportwear modern only"},
+    "ninja": {"body": "ninja wrap, compact kit, short blade, quiet stance", "forbid": "heavy plate armor"},
+    "samurai": {"body": "samurai armor, laced plates, helmet crest, katana", "forbid": "european plate as default"},
+    "pirate": {"body": "pirate, sea-worn cloth, practical weapons", "forbid": "shiny parade armor"},
+    "cyborg": {"body": "cyborg, flesh joined to machine, visible joints", "forbid": "fully organic unchanged body"},
+    "alien": {"body": "alien, nonhuman anatomy, unfamiliar silhouette", "forbid": "unchanged human celebrity body"},
+    "fairy": {"body": "fairy, small scale, insect or leaf wings, glow", "forbid": "human-sized no wings"},
+    "elf": {"body": "elf, long features, fine cloth, pointed ears", "forbid": "round human ears only"},
+    "dwarf": {"body": "dwarf, compact powerful build, heavy craft kit", "forbid": "tall slim elf proportions"},
+    "orc": {"body": "orc, tusked, heavy jaw, powerful frame", "forbid": "delicate human pretty-face only"},
+    "goblin": {"body": "goblin, small, long hands, cunning face", "forbid": "heroic human knight body"},
+    "phoenix": {"body": "phoenix, fire-bird, flame plumage, wings", "forbid": "ordinary pigeon, no fire"},
+    "griffin": {"body": "griffin, eagle head and wings, lion hind", "forbid": "ordinary lion or eagle only"},
 }
 
 ALIASES = {
@@ -168,6 +199,32 @@ ALIASES = {
     "siren": "mermaid",
     "kraken": "octopus",
     "squid": "octopus",
+    "kitten": "cat",
+    "doggie": "dog",
+    "wolfy": "wolf",
+    "foxxy": "fox",
+    "owlet": "owl",
+    "raven": "crow",
+    "bunny": "rabbit",
+    "hare": "rabbit",
+    "mouse": "rat",
+    "liz": "lizard",
+    "gecko": "lizard",
+    "tortoise": "turtle",
+    "vamp": "vampire",
+    "warlock": "wizard",
+    "mage": "wizard",
+    "shinobi": "ninja",
+    "bushi": "samurai",
+    "buccaneer": "pirate",
+    "space alien": "alien",
+    "fae": "fairy",
+    "faerie": "fairy",
+    "pixie": "fairy",
+    "dwarven": "dwarf",
+    "ork": "orc",
+    "firebird": "phoenix",
+    "gryphon": "griffin",
 }
 
 # Famous subjects whose default look will crush a weak "but as a fish" clause.
@@ -208,6 +265,18 @@ TRANSFORM_PATTERNS = [
     re.compile(r"(?P<sub>.+?)\s+hybrid\s+(?:with\s+)?(?P<form>.+)$", re.I),
     re.compile(r"(?P<sub>.+?)\s+but\s+(?:it'?s|it is)\s+(?:a\s+|an\s+)?(?P<form>.+)$", re.I),
     re.compile(r"(?P<sub>.+?)\s+like\s+(?:a\s+|an\s+)?(?P<form>.+)$", re.I),
+    re.compile(
+        r"turn\s+(?P<sub>.+?)\s+into\s+(?:a\s+|an\s+)?(?P<form>.+)$",
+        re.I,
+    ),
+    re.compile(
+        r"(?P<sub>.+?)\s+but\s+make\s+(?:it|them|him|her)\s+(?:a\s+|an\s+)?(?P<form>.+)$",
+        re.I,
+    ),
+    re.compile(
+        r"(?:i want|give me|draw)\s+(?P<sub>.+?)\s+(?:that's|that is|who is)\s+(?:a\s+|an\s+)?(?P<form>.+)$",
+        re.I,
+    ),
 ]
 
 FILLER = re.compile(
@@ -269,16 +338,24 @@ def _markers(subject: str) -> str:
     return f"keep the recognizable identity of {subject.strip()}: signature colors, face, and motifs only"
 
 
-def understand(user_text: str) -> Intent:
+def understand(user_text: str, *, fluid: bool = True) -> Intent:
     raw = (user_text or "").strip()
     intent = Intent(raw=raw, rewritten=raw, summary="literal description")
     if not raw:
         return intent
 
+    cleaned = raw
+    if fluid:
+        cleaned, notes = fluidize(raw, expand=True)
+        intent.notes.extend(notes)
+        intent.rewritten = cleaned
+        if notes:
+            intent.summary = "; ".join(notes)
+
     sub = form = ""
     used_like = False
     for pat in TRANSFORM_PATTERNS:
-        m = pat.search(raw)
+        m = pat.search(cleaned)
         if not m:
             continue
         sub = (m.groupdict().get("sub") or "").strip(" ,.-")
@@ -290,10 +367,10 @@ def understand(user_text: str) -> Intent:
 
     form_key = _match_form(form) if form else ""
     if used_like and not form_key:
-        intent.rewritten = SPACE.sub(" ", raw)
+        intent.rewritten = SPACE.sub(" ", cleaned)
         return intent
     if not form and not form_key:
-        intent.rewritten = SPACE.sub(" ", raw)
+        intent.rewritten = SPACE.sub(" ", cleaned)
         return intent
 
     recipe = FORMS.get(form_key)
