@@ -523,7 +523,7 @@ class ExportPage(ctk.CTkFrame):
         ctk.CTkButton(brow, text="Open exports", fg_color=theme.CARD, command=lambda: os.startfile(EXPORTS)).pack(side="left", padx=8)
 
         theme.section(form, "Text → video").pack(anchor="w", pady=(22, 4))
-        theme.muted(form, "Writes a still, animates it, then encodes MP4. Uses your local Flux + ffmpeg. Optional SpaceXAI video if a key is in Settings.", wrap=720).pack(anchor="w")
+        theme.muted(form, "Writes a still, animates it, then encodes MP4. Local Flux + ffmpeg only — nothing leaves this PC.", wrap=720).pack(anchor="w")
         self.t2v_cam = ctk.CTkOptionMenu(form, values=presentation_labels(), fg_color=theme.CARD, width=320)
         self.t2v_cam.set(PRESENTATIONS["hades"]["label"])
         self.t2v_cam.pack(anchor="w", pady=(4, 6))
@@ -533,7 +533,7 @@ class ExportPage(ctk.CTkFrame):
         ctk.CTkButton(form, text="Generate text-to-video", fg_color=theme.WARM, command=self.text_video).pack(anchor="w", pady=6)
 
         theme.section(form, "Image → video").pack(anchor="w", pady=(16, 4))
-        theme.muted(form, "Pick a still (or last image) and describe the motion. Same local pipeline, or SpaceXAI if enabled.", wrap=720).pack(anchor="w")
+        theme.muted(form, "Pick a still (or last image) and describe the motion. Same local Flux + ffmpeg pipeline.", wrap=720).pack(anchor="w")
         self.i2v = ctk.CTkEntry(form, width=520, placeholder_text="the character jumps in place, then lands")
         self.i2v.pack(anchor="w", pady=6)
         irow = ctk.CTkFrame(form, fg_color="transparent")
@@ -639,16 +639,8 @@ class ExportPage(ctk.CTkFrame):
 
     def _make_video(self, prompt: str, still: Path | None) -> None:
         from ..engine.video import animate_to_video
-        from ..engine.xai import XAIClient, XAIError
-        from ..paths import VIDEOS
-
-        key = (self.app.cfg.get("xai_api_key") or "").strip()
-        use_cloud = bool(self.app.cfg.get("xai_enabled")) and bool(key)
 
         def work():
-            if use_cloud:
-                dest = VIDEOS / f"cloud_{Path(still).stem if still else 't2v'}.mp4"
-                return XAIClient(key).video(prompt, dest, image_path=still, duration=6)
             _pk, pres = presentation_by_label(self.t2v_cam.get())
             return animate_to_video(
                 self.app.client(),
@@ -776,12 +768,13 @@ class SettingsPage(ctk.CTkFrame):
         self.guidance.insert(0, str(self.app.cfg.get("guidance", 3.5)))
         self.guidance.pack(anchor="w")
 
-        theme.section(box, "Optional SpaceXAI (not required)").pack(anchor="w", pady=(18, 4))
-        theme.muted(box, "Local Flux is the free path. If you later add an XAI_API_KEY you can switch image edits to grok-imagine-image-2.0 — leave this blank to stay 100% free.", wrap=720).pack(anchor="w")
-        self.xai = ctk.CTkEntry(box, width=480, placeholder_text="xai-…", show="•")
-        if self.app.cfg.get("xai_api_key"):
-            self.xai.insert(0, self.app.cfg["xai_api_key"])
-        self.xai.pack(anchor="w", pady=(6, 4))
+        theme.section(box, "Local only").pack(anchor="w", pady=(18, 4))
+        theme.muted(
+            box,
+            "No cloud AI. Chat, Imagine, edits, and video all run on this PC through ComfyUI + Flux + ffmpeg. "
+            "Memory and files stay under %LOCALAPPDATA%\\SpriteForge.",
+            wrap=720,
+        ).pack(anchor="w")
 
         ctk.CTkButton(box, text="Save settings", fg_color=theme.WARM, command=self.save).pack(anchor="w", pady=18)
 
@@ -796,8 +789,8 @@ class SettingsPage(ctk.CTkFrame):
         except ValueError:
             self.app.set_status("Steps/guidance must be numbers.", "warn")
             return
-        self.app.cfg["xai_api_key"] = self.xai.get().strip()
-        self.app.cfg["xai_enabled"] = bool(self.app.cfg["xai_api_key"])
+        self.app.cfg.pop("xai_api_key", None)
+        self.app.cfg.pop("xai_enabled", None)
         save_config(self.app.cfg)
         self.app.set_status("Settings saved.", "ok")
         self.app.refresh_comfy()

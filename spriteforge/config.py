@@ -26,8 +26,6 @@ DEFAULTS = {
     "refiner": False,
     "last_seed": -1,
     "lock_strength": "tight",
-    "xai_api_key": "",
-    "xai_enabled": False,
     "setup_complete": False,
     "install_pack": "flux",
     "quality_mode": "quality",

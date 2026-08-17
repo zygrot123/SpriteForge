@@ -18,7 +18,7 @@ Double-click `launch.bat`.
 
 ## Download the EXE (Release)
 
-**[SpriteForge v1.0.6 — Windows zip](https://github.com/zygrot123/SpriteForge/releases/tag/v1.0.6)**
+**[SpriteForge v1.0.7 — Windows zip](https://github.com/zygrot123/SpriteForge/releases/tag/v1.0.7)**
 
 Unzip the whole folder, then run `SpriteForge.exe`. Keep `_internal` next to the exe.
 
@@ -54,6 +54,6 @@ Open **Settings → Download / repair engine** to re-run the installer.
 | `library/frames/` | Animation frames |
 | `library/sheets/` | Exported sprite sheets |
 
-## Optional cloud
+## Local only
 
-Settings can store an `XAI_API_KEY` for SpaceXAI / grok-imagine later. Leave it blank to stay fully local and free.
+No cloud AI, no API keys. Chat (Forge), Imagine, edits, and T2V/I2V all run on this PC through **ComfyUI + Flux + ffmpeg**. Memory and files stay in `%LOCALAPPDATA%\SpriteForge`.

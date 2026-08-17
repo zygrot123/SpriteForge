@@ -105,7 +105,6 @@ class Forge:
         text: str,
         files: list[Path] | None = None,
         last_image: Path | str | None = None,
-        xai_key: str = "",
     ) -> dict:
         raw = (text or "").strip()
         files = [Path(p) for p in (files or []) if Path(p).exists()]
@@ -176,14 +175,10 @@ class Forge:
         action = self._action(raw, files, last_image)
         if action:
             out = (
-                f"I'll do that on the file now.\n"
+                f"I'll do that on the file now, locally.\n"
                 f"Action: {action['type']} → {Path(action['path']).name}\n"
                 f"{action.get('prompt') or raw}"
             )
-            if xai_key:
-                smart = self._xai_say(raw, out, xai_key)
-                if smart:
-                    out = smart
 
         self._log("forge", out)
         return {"text": out, "action": action}
@@ -210,28 +205,6 @@ class Forge:
             spec = interpret_edit(raw)
             return {"type": "edit", "path": str(img), "prompt": spec["prompt"], "raw": raw}
         return None
-
-    def _xai_say(self, user: str, fallback: str, key: str) -> str:
-        try:
-            from .xai import XAIClient
-
-            return XAIClient(key).chat(
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are Forge, SpriteForge's local studio partner. "
-                            "Be concrete and brief. If an edit is happening, say what will change. "
-                            "You can edit images, make video, and remember the user."
-                        ),
-                    },
-                    {"role": "user", "content": user},
-                    {"role": "assistant", "content": fallback},
-                    {"role": "user", "content": "Say that back in one short clear reply as Forge."},
-                ]
-            )
-        except Exception:
-            return ""
 
     def _compose(self, **k) -> str:
         low = k["low"]

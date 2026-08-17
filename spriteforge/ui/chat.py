@@ -113,10 +113,9 @@ class ChatPage(ctk.CTkFrame):
         forge = self._forge()
 
         last = getattr(self.app, "last_image", None)
-        key = (self.app.cfg.get("xai_api_key") or "") if self.app.cfg.get("xai_enabled") else ""
 
         def work():
-            return forge.think(text, files, last_image=last, xai_key=key)
+            return forge.think(text, files, last_image=last)
 
         def done(payload, err):
             if err:
