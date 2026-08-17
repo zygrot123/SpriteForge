@@ -24,9 +24,10 @@ library/models/
 runtime/
 downloads/
 
-# PyInstaller
+# PyInstaller + packaged zip (ship via GitHub Releases)
 build/
 dist/
+SpriteForge-Windows.zip
 
 # OS / editor
 Thumbs.db

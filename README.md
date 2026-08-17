@@ -16,10 +16,18 @@ Track this repo in **GitHub Desktop** (File → Add local repository → `Sprite
 
 Double-click `launch.bat`.
 
+## Download the EXE (Release)
+
+**[SpriteForge v1.0.0 — Windows zip](https://github.com/zygrot123/SpriteForge/releases/tag/v1.0.0)**
+
+Unzip the whole folder, then run `SpriteForge.exe`. Keep `_internal` next to the exe.
+
+GitHub Desktop → repo → **Releases** also lists this build.
+
 ## Windows EXE (this PC or another PC)
 
-1. Build once: double-click `build.bat` (or use the already-built folder).
-2. Copy the whole folder `dist\SpriteForge\` to the other computer. The file you double-click is `SpriteForge.exe`.
+1. Or build yourself: double-click `build.bat`.
+2. Copy the whole folder `dist\SpriteForge\` to the other computer.
 3. First start on a new PC opens a setup window. It downloads ComfyUI and the FLUX models (~23 GB, needs an NVIDIA GPU + internet). Downloads resume if they drop.
 4. After that the app works offline. Models live in `%LOCALAPPDATA%\SpriteForge\`.
 
