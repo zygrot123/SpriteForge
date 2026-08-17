@@ -61,6 +61,14 @@ STRENGTHS: dict[str, float] = {
 UHD_LONG = 3840
 FLUX_PIXEL_CAP = 3840 * 2160
 
+RESOLUTIONS: dict[str, int] = {
+    "360p": 360,
+    "480p": 480,
+    "720p": 720,
+    "1080p": 1080,
+    "4K": 2160,
+}
+
 
 def think_prompt(
     text: str,
@@ -89,9 +97,19 @@ def think_prompt(
 
 
 def target_4k(width: int, height: int) -> tuple[int, int]:
-    long = max(int(width), int(height), 1)
-    scale = UHD_LONG / long
-    return snap16(max(64, int(width * scale))), snap16(max(64, int(height * scale)))
+    return target_res(width, height, "4K")
+
+
+def target_res(width: int, height: int, preset: str = "1080p") -> tuple[int, int]:
+    """Fit the image so its height matches 360/480/720/1080/4K, keep aspect."""
+    h0 = max(int(height), 1)
+    w0 = max(int(width), 1)
+    want = int(RESOLUTIONS.get(preset, 1080))
+    th = want if want % 2 == 0 else want + 1
+    tw = max(2, int(round(w0 * (th / h0))))
+    if tw % 2:
+        tw += 1
+    return tw, th
 
 
 def _save_rgb(src: Path, dest: Path, size: tuple[int, int] | None = None) -> Path:
@@ -183,20 +201,36 @@ def upscale_4k(
     guidance: float = 3.5,
     seed: int | None = None,
 ) -> Path:
-    """Creative 4K upscale: Flux detail pass when VRAM allows, always writes 4K."""
+    return upscale_image(client, src, preset="4K", text=text, style=style, think=think, steps=steps, guidance=guidance, seed=seed)
+
+
+def upscale_image(
+    client,
+    src: Path,
+    *,
+    preset: str = "1080p",
+    text: str = "",
+    style: str = "Open (free)",
+    think: bool = True,
+    steps: int = 18,
+    guidance: float = 3.5,
+    seed: int | None = None,
+) -> Path:
+    """Scale a still to 360p / 480p / 720p / 1080p / 4K. Flux refine when enlarging."""
     ensure_dirs()
     src = Path(src)
     im = Image.open(src)
-    tw, th = target_4k(*im.size)
+    tw, th = target_res(*im.size, preset)
+    enlarging = tw * th > im.size[0] * im.size[1] * 1.05
     seed = seed if seed is not None else random.randint(1, 2**31 - 1)
     prompt = think_prompt(
         text or "the same image, more fine detail",
         style=style,
         think=think,
-        extra="ultra-sharp 4K master, recover texture and edges, do not change the subject or composition",
+        extra=f"clean {preset} master, recover texture and edges, do not change the subject or composition",
         memory="",
     )
-    dest = unique_out(OUTPUTS, "imagine_4k")
+    dest = unique_out(OUTPUTS, f"imagine_{preset.replace(' ', '')}")
 
     def refine(w: int, h: int, denoise: float) -> Path | None:
         try:
@@ -219,9 +253,9 @@ def upscale_4k(
             return None
 
     refined: Path | None = None
-    if tw * th <= FLUX_PIXEL_CAP:
-        refined = refine(tw, th, 0.28)
-    if refined is None:
+    if enlarging and tw * th <= FLUX_PIXEL_CAP:
+        refined = refine(tw, th, 0.28 if preset in {"1080p", "4K"} else 0.22)
+    if enlarging and refined is None and preset == "4K":
         mid_scale = min(1.0, 2560 / max(tw, th))
         mw, mh = snap16(int(tw * mid_scale)), snap16(int(th * mid_scale))
         refined = refine(mw, mh, 0.32)
@@ -257,6 +291,7 @@ def imagine_video(
     guidance: float = 3.5,
     seed: int | None = None,
     max_long: int = 1280,
+    out_height: int | None = None,
 ) -> Path:
     """Image-to-video that keeps the full picture — no chroma punch-out."""
     ensure_dirs()
@@ -264,7 +299,11 @@ def imagine_video(
     seed = seed if seed is not None else random.randint(1, 2**31 - 1)
     im = Image.open(src).convert("RGB")
     w, h = im.size
-    scale = min(1.0, max_long / max(w, h))
+    if out_height:
+        work_h = min(int(out_height), 720)
+        scale = work_h / max(h, 1)
+    else:
+        scale = min(1.0, max_long / max(w, h))
     vw, vh = snap16(int(w * scale)), snap16(int(h * scale))
     if vw % 2:
         vw += 1
@@ -306,7 +345,35 @@ def imagine_video(
         last = dest
         frames.append(dest)
     dest = unique_out(VIDEOS, "imagine", ext=".mp4")
-    return frames_to_mp4(frames, dest, fps=fps)
+    frames_to_mp4(frames, dest, fps=fps)
+    if out_height and abs(int(out_height) - vh) > 4:
+        scaled = dest.with_name(dest.stem + f"_{int(out_height)}p.mp4")
+        dest = scale_video(dest, scaled, int(out_height))
+    return dest
+
+
+def scale_video(src: Path, dest: Path, height: int) -> Path:
+    """ffmpeg scale existing video to 360/480/720/1080/2160 tall."""
+    from .export import find_ffmpeg
+
+    ff = find_ffmpeg()
+    if not ff:
+        raise RuntimeError("ffmpeg not found. Open Setup and install video tools.")
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    h = max(2, int(height) // 2 * 2)
+    cmd = [
+        str(ff), "-y", "-i", str(src),
+        "-vf", f"scale=-2:{h}",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        str(dest),
+    ]
+    import subprocess
+
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0 or not dest.exists():
+        raise RuntimeError((proc.stderr or "ffmpeg scale failed")[-400:])
+    return dest
 
 
 def copy_pick(src: Path) -> Path:

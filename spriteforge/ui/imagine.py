@@ -11,12 +11,14 @@ from PIL import Image
 from ..engine.imagine import (
     ASPECTS,
     FREE_STYLES,
+    RESOLUTIONS,
     STRENGTHS,
     generate_variations,
     imagine_video,
     import_local,
+    scale_video,
     think_prompt,
-    upscale_4k,
+    upscale_image,
 )
 from ..engine.assets import unique_out
 from ..paths import OUTPUTS, VIDEOS
@@ -99,6 +101,10 @@ class ImaginePage(ctk.CTkFrame):
         self.aspect = ctk.CTkOptionMenu(form, values=list(ASPECTS), fg_color=theme.CARD)
         self.aspect.set("16:9")
         self.aspect.pack(fill="x", padx=18)
+        theme.section(form, "Output size (image + video)").pack(anchor="w", padx=18, pady=(10, 4))
+        self.outres = ctk.CTkOptionMenu(form, values=list(RESOLUTIONS), fg_color=theme.CARD)
+        self.outres.set("720p")
+        self.outres.pack(fill="x", padx=18)
 
         theme.section(form, "Motion (video)").pack(anchor="w", padx=18, pady=(10, 4))
         self.motion = ctk.CTkTextbox(form, height=64, fg_color=theme.CARD)
@@ -115,8 +121,12 @@ class ImaginePage(ctk.CTkFrame):
             font=ctk.CTkFont("Segoe UI", 15, "bold"), command=self.imagine,
         ).pack(fill="x", padx=18, pady=(16, 6))
         ctk.CTkButton(
-            form, text="Upscale selected to 4K", height=36, fg_color=theme.ACCENT_DIM,
+            form, text="Upscale image to size", height=36, fg_color=theme.ACCENT_DIM,
             hover_color="#24665c", command=self.upscale,
+        ).pack(fill="x", padx=18, pady=4)
+        ctk.CTkButton(
+            form, text="Upscale last video to size", height=36, fg_color=theme.CARD,
+            command=self.upscale_video,
         ).pack(fill="x", padx=18, pady=4)
         ctk.CTkButton(
             form, text="Text → video", height=36, fg_color=theme.CARD, command=self.text_video,
@@ -288,15 +298,17 @@ class ImaginePage(ctk.CTkFrame):
         style = self.style.get()
         think = self._think()
 
+        preset = self.outres.get()
+
         def work():
-            return upscale_4k(self.app.client(), src, text=text, style=style, think=think)
+            return upscale_image(self.app.client(), src, preset=preset, text=text, style=style, think=think)
 
         def done(path, err):
             if err:
-                self.app.set_status(f"4K upscale failed: {err}", "err")
+                self.app.set_status(f"{preset} upscale failed: {err}", "err")
                 return
             self.app.last_image = path
-            self.app.lib.record_output(path, {"kind": "imagine_4k", "prompt": text, "src": str(src)})
+            self.app.lib.record_output(path, {"kind": f"imagine_{preset}", "prompt": text, "src": str(src)})
             self.app.mind.note(
                 "upscale", text, style=style, aspect=self.aspect.get(),
                 variant=self.picked_i if self.picked_i >= 0 else None,
@@ -311,10 +323,10 @@ class ImaginePage(ctk.CTkFrame):
                 w, h = Image.open(path).size
             except OSError:
                 w = h = 0
-            self.pick_lbl.configure(text=f"4K ready  ·  {w}×{h}  ·  {path.name}", text_color=theme.OK)
-            self.app.set_status(f"4K upscale → {path.name} ({w}×{h})", "ok")
+            self.pick_lbl.configure(text=f"{preset} ready  ·  {w}×{h}  ·  {path.name}", text_color=theme.OK)
+            self.app.set_status(f"{preset} → {path.name} ({w}×{h})", "ok")
 
-        self.app.run_job(work, done, "Upscaling selected to 4K…")
+        self.app.run_job(work, done, f"Upscaling image to {preset}…")
 
     def edit_image(self) -> None:
         src = self.still if self.still and Path(self.still).exists() else self._selected()
@@ -388,6 +400,7 @@ class ImaginePage(ctk.CTkFrame):
                 still = ones[0]
             return still, imagine_video(
                 self.app.client(), still, text=text, motion=motion, style=style, think=think,
+                out_height=RESOLUTIONS.get(self.outres.get(), 720),
             )
 
         def done(payload, err):
@@ -396,6 +409,7 @@ class ImaginePage(ctk.CTkFrame):
                 return
             still, path = payload
             self.app.last_image = still
+            self.app.last_video = path
             self.app.mind.note("video", text, style=style, aspect=self.aspect.get(), weight=2.0, path=str(path))
             self.app.refresh_memory_label()
             self.app.set_status(f"Video ready → {path.name}", "ok")
@@ -409,25 +423,55 @@ class ImaginePage(ctk.CTkFrame):
         think = self._think()
         motion = self._motion()
 
+        height = RESOLUTIONS.get(self.outres.get(), 720)
+
         def work():
             return imagine_video(
                 self.app.client(), src, text=text, motion=motion, style=style, think=think,
+                out_height=height,
             )
 
         def done(path, err):
             if err:
                 self.app.set_status(f"Video failed: {err}", "err")
                 return
+            self.app.last_video = path
             self.app.mind.note("video", text, style=style, aspect=self.aspect.get(), weight=2.0, path=str(path))
             self.app.refresh_memory_label()
-            self.app.set_status(f"Video ready → {path.name}", "ok")
+            self.app.set_status(f"Video ready ({self.outres.get()}) → {path.name}", "ok")
             os.startfile(path)
             try:
                 os.startfile(VIDEOS)
             except OSError:
                 pass
 
-        self.app.run_job(work, done, "Animating your photo to follow the prompt…")
+        self.app.run_job(work, done, f"Animating your photo at {self.outres.get()}…")
+
+    def upscale_video(self) -> None:
+        src = getattr(self.app, "last_video", None)
+        if not src or not Path(src).exists():
+            pick = filedialog.askopenfilename(title="Choose a video to scale", filetypes=[("Video", "*.mp4;*.mov;*.mkv;*.webm")])
+            if not pick:
+                self.app.set_status("No video to upscale.", "warn")
+                return
+            src = Path(pick)
+        src = Path(src)
+        preset = self.outres.get()
+        height = RESOLUTIONS.get(preset, 720)
+        dest = unique_out(VIDEOS, f"video_{preset}", ext=".mp4")
+
+        def work():
+            return scale_video(src, dest, height)
+
+        def done(path, err):
+            if err:
+                self.app.set_status(f"Video scale failed: {err}", "err")
+                return
+            self.app.last_video = path
+            self.app.set_status(f"Video {preset} → {path.name}", "ok")
+            os.startfile(path)
+
+        self.app.run_job(work, done, f"Scaling video to {preset}…")
 
     def browse(self) -> None:
         path = filedialog.askopenfilename(

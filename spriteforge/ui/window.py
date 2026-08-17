@@ -12,6 +12,7 @@ from ..engine.comfy import ComfyClient, ComfyError, start_comfy
 from ..engine.memory import MemoryStore
 from ..paths import LOG_PATH, OUTPUTS, ensure_dirs
 from . import theme
+from .chat import ChatPage
 from .imagine import ImaginePage
 from .memory import MemoryPage
 from .studio import AnimatePage, GeneratePage, ModelsPage
@@ -30,6 +31,7 @@ class SpriteForgeApp(ctk.CTk):
         self.last_image = None
         self.last_frames: list = []
         self.last_sheet = None
+        self.last_video = None
         self._pages: dict[str, ctk.CTkFrame] = {}
         self._nav_btns: dict[str, ctk.CTkButton] = {}
 
@@ -85,6 +87,7 @@ class SpriteForgeApp(ctk.CTk):
         items = [
             ("generate", "Generate"),
             ("imagine", "Imagine"),
+            ("chat", "Forge chat"),
             ("models", "Lock model"),
             ("animate", "Animations"),
             ("structures", "Structures"),
@@ -126,6 +129,7 @@ class SpriteForgeApp(ctk.CTk):
 
         self._pages["generate"] = GeneratePage(self.body, self)
         self._pages["imagine"] = ImaginePage(self.body, self)
+        self._pages["chat"] = ChatPage(self.body, self)
         self._pages["models"] = ModelsPage(self.body, self)
         self._pages["animate"] = AnimatePage(self.body, self)
         self._pages["structures"] = StructuresPage(self.body, self)
