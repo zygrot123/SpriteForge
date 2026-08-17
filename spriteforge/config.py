@@ -31,6 +31,7 @@ DEFAULTS = {
     "quality_mode": "quality",
     "use_memory": True,
     "active_profile": "default",
+    "last_sprite_prompt": "",
 }
 
 

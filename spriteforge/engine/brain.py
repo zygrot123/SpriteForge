@@ -248,6 +248,14 @@ KNOWN_MARKERS = {
 
 TRANSFORM_PATTERNS = [
     re.compile(
+        r"^(?:a|an|the)\s+(?P<form>.+?)\s+(?:which|that|who)\s+looks?\s+like\s+(?:a|an|the\s+)?(?P<sub>.+)$",
+        re.I,
+    ),
+    re.compile(
+        r"^(?P<sub>.+?)\s+(?:which|that|who)\s+looks?\s+like\s+(?:a|an|the\s+)?(?P<form>.+)$",
+        re.I,
+    ),
+    re.compile(
         r"(?P<sub>.+?)\s+but\s+(?:please\s+)?(?:make\s+(?:it|this|him|her|them)\s+)?"
         r"(?:look\s+)?(?:like\s+)?(?:as\s+)?(?:a\s+|an\s+)?(?P<form>.+)$",
         re.I,
@@ -280,9 +288,9 @@ TRANSFORM_PATTERNS = [
 ]
 
 FILLER = re.compile(
-    r"\b(please|just|really|kinda|kind of|sort of|like|looks? like|"
-    r"make it|make this|make him|make her|turn it into|as a|as an|as|"
-    r"a|an|the|but|its|it's|it is|very|super|more|of)\b",
+    r"\b(please|just|really|kinda|kind of|sort of|"
+    r"make it|make this|make him|make her|turn it into|"
+    r"but|its|it's|it is|very|super|more)\b",
     re.I,
 )
 SPACE = re.compile(r"\s+")
@@ -315,6 +323,11 @@ def _norm_form(text: str) -> str:
 
 
 def _match_form(text: str) -> str:
+    """Match a body form from a short phrase. Prefer the whole phrase, then the last noun.
+
+    Older code returned the first dictionary hit, so 'a fish which looks like pikachu'
+    collapsed to just 'fish' and dropped Pikachu.
+    """
     blob = _norm_form(text)
     if not blob:
         return ""
@@ -322,12 +335,40 @@ def _match_form(text: str) -> str:
         return blob
     if blob in ALIASES:
         return ALIASES[blob]
-    for token in blob.split():
+    tokens = blob.split()
+    for token in reversed(tokens):
         if token in FORMS:
             return token
         if token in ALIASES:
             return ALIASES[token]
     return ""
+
+
+STOP = {
+    "a", "an", "the", "and", "or", "of", "to", "in", "on", "for", "with", "as",
+    "but", "that", "which", "who", "like", "looks", "look", "is", "it", "its",
+}
+
+
+def subject_shift(prev: str, curr: str) -> bool:
+    """True when the new prompt is a different subject, not a pose tweak."""
+    def toks(s: str) -> set[str]:
+        return {w for w in re.findall(r"[a-z0-9]+", (s or "").lower()) if w not in STOP and len(w) > 1}
+
+    a, b = toks(prev), toks(curr)
+    if not a or not b:
+        return False
+    if len(a & b) / max(len(b), 1) >= 0.34:
+        return False
+    icons = [n for n in KNOWN_MARKERS if n in " ".join(b)]
+    old_icons = [n for n in KNOWN_MARKERS if n in " ".join(a)]
+    if icons and icons != old_icons:
+        return True
+    forms_now = [t for t in b if t in FORMS or t in ALIASES]
+    forms_old = [t for t in a if t in FORMS or t in ALIASES]
+    if forms_now and forms_now != forms_old:
+        return True
+    return True
 
 
 def _markers(subject: str) -> str:
@@ -365,12 +406,25 @@ def understand(user_text: str, *, fluid: bool = True) -> Intent:
             break
         sub = form = ""
 
+    # "a fish which looks like pikachu" → body=fish, identity=pikachu
     form_key = _match_form(form) if form else ""
-    if used_like and not form_key:
-        intent.rewritten = SPACE.sub(" ", cleaned)
+    sub_key = _match_form(sub) if sub else ""
+    sub_icon = next((n for n in KNOWN_MARKERS if n in (sub or "").lower()), "")
+    form_icon = next((n for n in KNOWN_MARKERS if n in (form or "").lower()), "")
+    if form_key and (sub_icon or (not sub_key and sub)) and not form_icon:
+        pass  # form is the body, sub is the identity
+    elif sub_key and form_icon and not form_key:
+        sub, form, form_key = form, sub, sub_key
+    elif used_like and not form_key and not form_icon:
+        intent.rewritten = (
+            f"Paint every word of this request: {raw}. "
+            f"{SPACE.sub(' ', cleaned)}"
+        )
+        intent.summary = "full sentence (no word dropped)"
         return intent
     if not form and not form_key:
-        intent.rewritten = SPACE.sub(" ", cleaned)
+        intent.rewritten = f"Paint every word of this request: {raw}. {SPACE.sub(' ', cleaned)}"
+        intent.summary = "full sentence (no word dropped)"
         return intent
 
     recipe = FORMS.get(form_key)
@@ -387,6 +441,7 @@ def understand(user_text: str, *, fluid: bool = True) -> Intent:
     intent.form_text = form or label
     intent.transformed = True
     intent.rewritten = (
+        f"The user wrote this exact request and every word counts: {raw}. "
         f"NOT a normal {subject}. NOT the default {subject} body. "
         f"This is a {label} redesign of {subject}. "
         f"The silhouette must read as a {label} first. {body}. "

@@ -22,6 +22,18 @@ SPRITE_LOCK = (
     "clean readable silhouette, even studio lighting, game-ready 2D production asset"
 )
 
+SPRITE_LOCK_CREATURE = (
+    "game sprite asset, isolated single subject only, full body visible and centered, "
+    "natural pose for this creature (do not force a standing human pose), "
+    "no extra characters, no scenery, no text, no watermark, no UI, "
+    "clean readable silhouette, game-ready 2D production asset"
+)
+
+_CREATURE = (
+    "fish", "shark", "whale", "eel", "snake", "serpent", "ghost", "bird",
+    "bat", "moth", "bee", "dragon", "octopus", "squid", "mermaid", "swim",
+)
+
 IDENTITY_KEEP = (
     "KEEP THIS EXACT CHARACTER. Same face, same body proportions, same height, "
     "same outfit, same armor, same colors, same materials, same equipment, "
@@ -557,22 +569,31 @@ def compile_prompt(
     pipe = spec.get("pipeline", "prop") if spec else "sprite"
     plate = kind in {"structure", "scene"} and pipe in {"plate", "tile"}
     follow = bool(literal or plate)
+    low = user_text.lower()
+    sprite_lock = SPRITE_LOCK_CREATURE if any(w in low for w in _CREATURE) else SPRITE_LOCK
 
     if follow:
-        style_words = pack.get("env") or pack["words"]
-        view_words = ENV_VIEWS.get(view, ENV_VIEWS["front"])
+        if plate:
+            style_words = pack.get("env") or pack["words"]
+            view_words = ENV_VIEWS.get(view, ENV_VIEWS["front"])
+        else:
+            style_words = pack["words"]
+            view_words = VIEWS.get(view, VIEWS["isometric"])
         parts = [
-            f"Follow these words exactly and paint only what they say: {user_text}",
+            f"Follow every word of this request, do not drop later words: {user_text}",
+            f"Required picture: {user_text}",
         ]
         if spec.get("lock"):
             parts.append(spec["lock"])
         if pose:
             parts.append(pose)
+        if not plate:
+            parts.append(sprite_lock)
         parts.append(view_words)
         parts.append(style_words)
         if extra:
             parts.append(extra)
-        if chroma and pipe == "prop":
+        if chroma and (not plate):
             parts.append(BG_HEX.get(bg, BG_HEX["green"])[1])
         return _join(parts)
 
@@ -581,14 +602,17 @@ def compile_prompt(
     bg_words = BG_HEX.get(bg, BG_HEX["green"])[1]
     brain = intent if intent is not None else (Intent(raw=user_text, rewritten=user_text) if identity else understand(user_text))
 
-    parts: list[str] = []
+    parts: list[str] = [
+        f"Follow every word of this request, do not drop later words: {user_text}",
+        f"Required picture: {user_text}",
+    ]
     if identity:
         parts.append(IDENTITY_KEEP)
         parts.append(identity.strip())
-        if user_text:
-            parts.append(user_text)
     else:
-        parts.append(brain.visual())
+        vis = brain.visual()
+        if vis and vis.strip() != user_text:
+            parts.append(vis)
         if brain.transformed and brain.negatives:
             parts.append(f"must not be: {brain.negatives}")
     if pose:
@@ -597,7 +621,7 @@ def compile_prompt(
         sk = catalog.get(structure_kind or "prop", catalog["prop"])
         parts.append(sk["lock"])
     else:
-        parts.append(SPRITE_LOCK)
+        parts.append(sprite_lock)
     parts.append(view_words)
     parts.append(style_words)
     if presentation:

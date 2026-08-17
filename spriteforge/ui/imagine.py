@@ -93,7 +93,7 @@ class ImaginePage(ctk.CTkFrame):
             form, values=["Free think — invent complementary detail", "Exact words only"],
             fg_color=theme.CARD,
         )
-        self.think.set("Free think — invent complementary detail")
+        self.think.set("Exact words only")
         self.think.pack(fill="x", padx=18)
 
         theme.section(form, "Style").pack(anchor="w", padx=18, pady=(10, 4))

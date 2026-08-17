@@ -286,7 +286,7 @@ def generate_quality(
     if ref or env:
         cands = 1
         spec = {**spec, "retry": False, "refine": bool(refiner) if env else spec["refine"]}
-        if ref and not env:
+        if ref and not env and "Follow every word" not in work_prompt:
             work_prompt = f"{SAME_CHAR}, {work_prompt}"
     elif refiner:
         spec = {**spec, "refine": True}

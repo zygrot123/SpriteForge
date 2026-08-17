@@ -5,7 +5,7 @@ import re
 
 SPACE = re.compile(r"\s+")
 FILLER = re.compile(
-    r"\b(um+|uh+|er+|ah+|hmm+|like,?|you know|i mean|basically|literally|"
+    r"\b(um+|uh+|er+|ah+|hmm+|you know|i mean|basically|literally|"
     r"kinda|kind of|sort of|sorta|just|please|pretty please|can you please|"
     r"would you|could you|will you)\b",
     re.I,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import re
 from pathlib import Path
 from tkinter import filedialog
 
@@ -9,7 +10,7 @@ from PIL import Image
 
 from ..engine.assets import compose_sheet, process_sprite, slugify, unique_out
 from ..engine.quality import MODES, finish_sprite, generate_quality, mode_key, mode_labels
-from ..engine.brain import understand
+from ..engine.brain import subject_shift, understand
 from ..engine.motion import (
     CATEGORIES,
     DIR_SETS,
@@ -94,6 +95,7 @@ class GeneratePage(ctk.CTkFrame):
         self.app = app
         self.last_path: Path | None = None
         self.session_lock: Path | None = None
+        self.last_prompt: str = str(self.app.cfg.get("last_sprite_prompt") or "")
         self._preview_img = None
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -104,7 +106,7 @@ class GeneratePage(ctk.CTkFrame):
             form, text="Text → sprite", text_color=theme.TEXT,
             font=ctk.CTkFont("Segoe UI", 22, "bold"),
         ).pack(anchor="w", padx=18, pady=(18, 4))
-        theme.muted(form, "First generate invents the character. After that, keep “Same character” on so extra images stay that person — not a new warrior every click.").pack(anchor="w", padx=18, pady=(0, 12))
+        theme.muted(form, "Every word of your description is sent. A new subject (a fish, a house, Pikachu…) drops the last hero automatically. Turn on “Same character” only when you want another pose of the same person.").pack(anchor="w", padx=18, pady=(0, 12))
 
         theme.section(form, "Describe").pack(anchor="w", padx=18, pady=(8, 4))
         self.prompt = ctk.CTkTextbox(form, height=110, font=ctk.CTkFont("Segoe UI", 14), fg_color=theme.CARD)
@@ -125,15 +127,17 @@ class GeneratePage(ctk.CTkFrame):
         self.quality = self._combo(form, "Quality engine", mode_labels(), qdefault)
         self.follow = ctk.CTkCheckBox(form, text="Follow my words exactly (skip brain rewrite)")
         self.follow.pack(anchor="w", padx=18, pady=(10, 0))
+        self.follow.select()
         self.gen = GenPanel(form, self.app, default_w=768, default_h=1024)
         self.gen.pack(fill="x", padx=18)
+        self.size.configure(command=self._on_size)
+        self._on_size(self.size.get())
 
         self.key_bg = ctk.CTkCheckBox(form, text="Punch out background (PNG alpha)")
         self.key_bg.pack(anchor="w", padx=18, pady=4)
         self.key_bg.select()
         self.same_char = ctk.CTkCheckBox(form, text="Same character (don't invent a new one)")
         self.same_char.pack(anchor="w", padx=18, pady=4)
-        self.same_char.select()
         self.hold_lbl = ctk.CTkLabel(form, text="No character held yet — first generate will invent one.", text_color=theme.MUTED, wraplength=320, justify="left", anchor="w")
         self.hold_lbl.pack(fill="x", padx=18, pady=(0, 6))
         ctk.CTkButton(form, text="Forget character", fg_color=theme.CARD, height=28, command=self.forget_character).pack(fill="x", padx=18, pady=(0, 6))
@@ -232,8 +236,14 @@ class GeneratePage(ctk.CTkFrame):
             shown = f"[BRAIN] {intent.summary}\n\n{prompt}"
         self.compiled.insert("1.0", shown)
         self.app.cfg["quality_mode"] = o["quality"]
-        hold = bool(self.same_char.get()) and self.session_lock and self.session_lock.exists()
+        new_idea = subject_shift(self.last_prompt, o["text"])
+        if new_idea and self.session_lock:
+            self.same_char.deselect()
+            self.app.set_status("New subject — not reusing the last hero.", "info")
+        hold = bool(self.same_char.get()) and self.session_lock and self.session_lock.exists() and not new_idea
         lock_src = self.session_lock if hold else None
+        editish = bool(re.search(r"\b(add|another|second|remove|change|wear|hold|make him|make her)\b", o["text"], re.I))
+        lock_denoise = 0.56 if (hold and editish) else 0.32 if hold else 1.0
 
         def work():
             client = self.app.client()
@@ -274,7 +284,7 @@ class GeneratePage(ctk.CTkFrame):
                         dest_dir=OUTPUTS,
                         name="sprite",
                         ref_path=base_lock,
-                        lock_denoise=0.30,
+                        lock_denoise=lock_denoise,
                         sampler_name=sampler_name,
                         scheduler=scheduler,
                         batch_size=gs.batch_size,
@@ -300,8 +310,13 @@ class GeneratePage(ctk.CTkFrame):
             paths, metas = payload["paths"], payload["metas"]
             self.last_path = paths[0]
             self.app.last_image = paths[0]
-            if payload.get("lock"):
+            if payload.get("lock") and hold:
                 self.session_lock = Path(payload["lock"])
+            elif not hold and paths:
+                self.session_lock = paths[0]
+                self.same_char.select()
+            self.last_prompt = o["text"]
+            self.app.cfg["last_sprite_prompt"] = o["text"]
             self._show(paths[0])
             self._update_hold()
             score = metas[0].get("total", 0)

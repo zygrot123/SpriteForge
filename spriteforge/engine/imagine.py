@@ -101,8 +101,8 @@ def think_prompt(
     idea = (text or "").strip()
     if exact:
         parts = [
-            f"Follow these words exactly, do not add a different story: {idea}",
-            f"Required: {idea}",
+            f"Follow every word of this request, do not drop later words: {idea}",
+            f"Required picture: {idea}",
         ]
         if extra:
             parts.append(extra)
@@ -111,7 +111,10 @@ def think_prompt(
         from .brain import understand
 
         idea = understand(idea, fluid=True).visual()
-    parts = [f"The idea to paint: {idea}"]
+    parts = [
+        f"Follow every word of this request, do not drop later words: {text.strip()}",
+        f"The idea to paint: {idea}",
+    ]
     if think:
         parts.append(THINK)
     tint = FREE_STYLES.get(style, "")

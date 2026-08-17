@@ -113,6 +113,7 @@ class GenPanel(ctk.CTkFrame):
         ctk.CTkButton(seed_row, text="↺", width=40, fg_color=theme.CARD, command=self.reuse_seed).pack(side="left", padx=(6, 0))
         self.extra = ctk.CTkCheckBox(seed_row, text="Extra", width=70, command=self._toggle_extra)
         self.extra.pack(side="left", padx=(8, 0))
+        self.extra.select()
 
         self.extra_box = ctk.CTkFrame(self, fg_color=theme.CARD, corner_radius=8)
         theme.section(self.extra_box, "Negative prompt").pack(anchor="w", padx=10, pady=(8, 4))
@@ -135,6 +136,7 @@ class GenPanel(ctk.CTkFrame):
         self.script.pack(fill="x")
 
         self._last_used = int(last) if isinstance(last, int) else -1
+        self._toggle_extra()
 
     def _toggle_extra(self) -> None:
         if self.extra.get():
